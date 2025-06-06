@@ -1,0 +1,161 @@
+version: '3.8'
+
+# Docker Compose fallback for local development
+# This is a simplified version for testing without Kubernetes
+
+services:
+  # PostgreSQL for MLflow
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: mlflowdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mlflow123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MLflow tracking server
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    environment:
+      BACKEND_STORE_URI: postgresql://postgres:mlflow123@postgres:5432/mlflowdb
+      ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # JupyterLab (single user for testing)
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    environment:
+      SERVICE_TYPE: jupyter
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      NVIDIA_VISIBLE_DEVICES: all  # Access to RTX 3090
+    volumes:
+      - jupyter_home:/home/jovyan
+      - shared_projects:/shared/projects
+      - ./:/workspace
+    ports:
+      - "8888:8888"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Can be changed to "all" for full GPU access
+              capabilities: [gpu]
+
+  # VS Code Server (alternative to Jupyter)
+  vscode:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    environment:
+      SERVICE_TYPE: vscode
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - vscode_home:/home/jovyan
+      - shared_projects:/shared/projects
+      - ./:/workspace
+    ports:
+      - "8080:8080"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # TorchServe for model serving
+  torchserve:
+    build:
+      context: .
+      dockerfile: Dockerfile.torchserve
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - model_store:/mnt/models
+      - mlflow_artifacts:/mnt/mlflow-artifacts:ro
+    ports:
+      - "8081:8080"  # Inference
+      - "8082:8081"  # Management
+      - "8083:8082"  # Metrics
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  mlflow_artifacts:
+  jupyter_home:
+  vscode_home:
+  shared_projects:
+  model_store:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: ml-platform 

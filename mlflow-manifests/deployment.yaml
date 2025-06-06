@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-server
+  namespace: mlflow
+  labels:
+    app: mlflow-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-server
+  template:
+    metadata:
+      labels:
+        app: mlflow-server
+    spec:
+      containers:
+      - name: mlflow-server
+        image: localhost:5000/mlflow:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: BACKEND_STORE_URI
+          value: "postgresql://postgres:$(POSTGRES_PASSWORD)@postgresql:5432/mlflowdb"
+        - name: ARTIFACT_ROOT
+          value: "/mlflow/artifacts"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-password
+        volumeMounts:
+        - name: mlflow-artifacts
+          mountPath: /mlflow/artifacts
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: mlflow-artifacts
+        persistentVolumeClaim:
+          claimName: mlflow-artifacts-pvc
+      restartPolicy: Always 

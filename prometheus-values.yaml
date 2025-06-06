@@ -1,0 +1,95 @@
+# Prometheus configuration for ML Platform
+server:
+  # Persistence
+  persistentVolume:
+    enabled: true
+    storageClass: "local-storage"
+    size: 100Gi
+    
+  # Resources
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+  
+  # Retention
+  retention: "30d"
+  
+  # Global scrape configuration
+  global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+  
+  # Additional scrape configs
+  extraScrapeConfigs: |
+    # NVIDIA DCGM Exporter
+    - job_name: 'nvidia-dcgm-exporter'
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - gpu-operator-resources
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: nvidia-dcgm-exporter
+    
+    # MLflow metrics
+    - job_name: 'mlflow'
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - mlflow
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: mlflow-service
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: http
+    
+    # JupyterHub metrics  
+    - job_name: 'jupyterhub'
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - jupyterhub
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          action: keep
+          regex: hub
+
+# AlertManager configuration
+alertmanager:
+  enabled: true
+  persistentVolume:
+    enabled: true
+    storageClass: "local-storage"
+    size: 10Gi
+
+# Node Exporter
+nodeExporter:
+  enabled: true
+  hostNetwork: true
+  hostPID: true
+  
+# Kube State Metrics
+kubeStateMetrics:
+  enabled: true
+
+# Pushgateway
+pushgateway:
+  enabled: true
+  persistentVolume:
+    enabled: true
+    storageClass: "local-storage"
+    size: 10Gi
+
+# Service Monitor
+serviceMonitor:
+  enabled: true 

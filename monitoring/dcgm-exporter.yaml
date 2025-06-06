@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: gpu-operator-resources
+  labels:
+    app: nvidia-dcgm-exporter
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-dcgm-exporter
+  template:
+    metadata:
+      labels:
+        app: nvidia-dcgm-exporter
+    spec:
+      nodeSelector:
+        # Only run on nodes with GPUs
+        node.kubernetes.io/instance-type: gpu
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: nvidia-dcgm-exporter
+        image: nvcr.io/nvidia/k8s/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
+        securityContext:
+          privileged: true
+        ports:
+        - name: metrics
+          containerPort: 9400
+          hostPort: 9400
+        env:
+        - name: DCGM_EXPORTER_LISTEN
+          value: ":9400"
+        - name: DCGM_EXPORTER_KUBERNETES
+          value: "true"
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9400
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9400
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: gpu-operator-resources
+  labels:
+    app: nvidia-dcgm-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9400"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: metrics
+    port: 9400
+    targetPort: 9400
+    protocol: TCP
+  selector:
+    app: nvidia-dcgm-exporter 

@@ -1,0 +1,251 @@
+# JupyterHub Configuration with Flexible GPU Allocation
+# This allows users to request different numbers of GPUs based on availability
+
+hub:
+  config:
+    JupyterHub:
+      authenticator_class: oauthenticator.GitHubOAuthenticator
+      spawner_class: kubespawner.KubeSpawner
+    GitHubOAuthenticator:
+      client_id: "your-github-client-id"
+      client_secret: "your-github-client-secret" 
+      oauth_callback_url: "http://jupyterhub.ml-platform.local/hub/oauth-callback"
+      username_claim: "login"
+    KubeSpawner:
+      image: "localhost:5000/ml-base:latest"
+      image_pull_policy: "Always"
+      
+      # Memory and CPU limits (scaled with GPU allocation)
+      memory_limit: "64G"    # High memory for multiple GPUs
+      memory_guarantee: "16G"
+      cpu_limit: 16          # More CPU cores for multi-GPU
+      cpu_guarantee: 4
+      
+      # Flexible GPU allocation profiles
+      profile_list:
+        - display_name: "💻 CPU Development"
+          description: "No GPU - For data analysis and light ML"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              memory: "16Gi"
+              cpu: "4"
+            extra_resource_guarantees:
+              memory: "8Gi"
+              cpu: "2"
+            environment:
+              COMPUTE_TYPE: "cpu"
+              RECOMMENDED_BATCH_SIZE: "32"
+        
+        - display_name: "🚀 Single GPU (Standard)"
+          description: "1 GPU - Most ML training workloads"
+          default: true
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "1"
+              memory: "32Gi"
+              cpu: "8"
+            extra_resource_guarantees:
+              nvidia.com/gpu: "1"
+              memory: "16Gi"
+              cpu: "4"
+            environment:
+              COMPUTE_TYPE: "single_gpu"
+              RECOMMENDED_BATCH_SIZE: "64"
+              NVIDIA_VISIBLE_DEVICES: "0"
+        
+        - display_name: "🔥 Dual GPU (Advanced)"
+          description: "2 GPUs - Large models and distributed training"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "2"
+              memory: "48Gi"
+              cpu: "12"
+            extra_resource_guarantees:
+              nvidia.com/gpu: "2"
+              memory: "24Gi"
+              cpu: "6"
+            environment:
+              COMPUTE_TYPE: "multi_gpu"
+              RECOMMENDED_BATCH_SIZE: "128"
+              NVIDIA_VISIBLE_DEVICES: "0,1"
+        
+        - display_name: "⚡ Triple GPU (Power User)"
+          description: "3 GPUs - Very large models and research"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "3"
+              memory: "64Gi"
+              cpu: "16"
+            extra_resource_guarantees:
+              nvidia.com/gpu: "3"
+              memory: "32Gi"
+              cpu: "8"
+            environment:
+              COMPUTE_TYPE: "multi_gpu"
+              RECOMMENDED_BATCH_SIZE: "192"
+              NVIDIA_VISIBLE_DEVICES: "0,1,2"
+        
+        - display_name: "🌟 All GPUs (Maximum)"
+          description: "All available GPUs - Research and large-scale training"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "4"  # Or however many you have
+              memory: "64Gi"
+              cpu: "16"
+            extra_resource_guarantees:
+              nvidia.com/gpu: "4"
+              memory: "48Gi" 
+              cpu: "12"
+            environment:
+              COMPUTE_TYPE: "multi_gpu"
+              RECOMMENDED_BATCH_SIZE: "256"
+              NVIDIA_VISIBLE_DEVICES: "all"
+        
+        - display_name: "🧪 Shared GPU (Testing)"
+          description: "Shared GPU access - For experimentation"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "1"
+              memory: "16Gi"
+              cpu: "4"
+            extra_resource_guarantees:
+              memory: "8Gi"
+              cpu: "2"
+            environment:
+              COMPUTE_TYPE: "shared_gpu"
+              RECOMMENDED_BATCH_SIZE: "32"
+              NVIDIA_VISIBLE_DEVICES: "0"
+              CUDA_MPS_ENABLE: "1"  # Enable Multi-Process Service
+      
+      # Storage configuration
+      storage_pvc_ensure: true
+      storage_capacity: "100Gi"  # Larger for multi-GPU users
+      storage_access_modes:
+        - ReadWriteOnce
+      storage_class: "local-storage"
+      
+      # Dynamic resource allocation hook
+      pre_spawn_hook: |
+        """
+        Custom hook to check GPU availability before spawning
+        """
+        import subprocess
+        import json
+        
+        def check_gpu_availability(spawner):
+            try:
+                # Get current GPU usage
+                result = subprocess.run(['nvidia-smi', '--query-gpu=index,memory.used,memory.total,utilization.gpu', 
+                                       '--format=csv,noheader,nounits'], 
+                                       capture_output=True, text=True)
+                
+                gpus = []
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        idx, mem_used, mem_total, util = line.split(', ')
+                        gpus.append({
+                            'index': int(idx),
+                            'utilization': int(util),
+                            'memory_used_pct': int(mem_used) / int(mem_total) * 100
+                        })
+                
+                # Check if requested GPUs are available
+                requested_gpus = spawner.extra_resource_guarantees.get('nvidia.com/gpu', 0)
+                available_gpus = len([g for g in gpus if g['utilization'] < 50])
+                
+                if requested_gpus > available_gpus:
+                    spawner.log.warning(f"Requested {requested_gpus} GPUs, but only {available_gpus} available")
+                    # Could automatically downgrade or queue the request
+                
+                return True
+                
+            except Exception as e:
+                spawner.log.error(f"Error checking GPU availability: {e}")
+                return True  # Allow spawn anyway
+      
+      # Mount shared projects directory
+      volumes:
+        - name: shared-projects
+          persistentVolumeClaim:
+            claimName: shared-projects-pvc
+      volume_mounts:
+        - name: shared-projects
+          mountPath: /shared/projects
+          readOnly: false
+      
+      # Node selector for GPU nodes
+      node_selector:
+        node.kubernetes.io/instance-type: gpu
+      
+      # Service account
+      service_account: "jupyterhub-user"
+      
+      # Startup timeout (longer for multi-GPU)
+      start_timeout: 900  # 15 minutes for large allocations
+
+  # Database configuration
+  db:
+    type: sqlite-pvc
+    pvc:
+      storageClassName: local-storage
+      accessModes:
+        - ReadWriteOnce
+      storage: 10Gi
+
+  # Resources for hub
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+
+# Proxy configuration
+proxy:
+  secretToken: # Will be auto-generated
+  service:
+    type: ClusterIP
+  
+  resources:
+    limits:
+      cpu: 1
+      memory: 1Gi
+    requests:
+      cpu: 0.5
+      memory: 512Mi
+
+# RBAC configuration
+rbac:
+  enable: true
+
+# Advanced culling with GPU consideration
+cull:
+  enabled: true
+  timeout: 7200    # 2 hours for GPU users
+  every: 1800      # Check every 30 minutes
+  maxAge: 28800    # 8 hours max for multi-GPU users
+  
+  # Don't cull high-resource users immediately
+  users:
+    # Example: power users get longer sessions
+    # admin:
+    #   timeout: 14400  # 4 hours
+
+# Custom environment variables for all users
+hub:
+  extraEnv:
+    MLFLOW_TRACKING_URI: "http://mlflow-service.mlflow:5000"
+    DVC_CACHE_DIR: "/home/jovyan/.dvc/cache"
+    JUPYTER_ENABLE_LAB: "yes"
+    
+# Monitoring annotations
+hub:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081" 

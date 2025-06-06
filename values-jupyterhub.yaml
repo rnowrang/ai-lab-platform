@@ -1,0 +1,199 @@
+# JupyterHub configuration for ML Platform
+hub:
+  config:
+    JupyterHub:
+      authenticator_class: oauthenticator.GitHubOAuthenticator
+      spawner_class: kubespawner.KubeSpawner
+    GitHubOAuthenticator:
+      client_id: "your-github-client-id"  # Will be overridden by secret
+      client_secret: "your-github-client-secret"  # Will be overridden by secret
+      oauth_callback_url: "http://jupyterhub.ml-platform.local/hub/oauth-callback"
+      username_claim: "login"
+    KubeSpawner:
+      # Use the ML base image
+      image: "localhost:5000/ml-base:latest"
+      image_pull_policy: "Always"
+      
+      # GPU allocation - each user gets 1 GPU
+      extra_resource_limits:
+        nvidia.com/gpu: "1"
+      extra_resource_guarantees:
+        nvidia.com/gpu: "1"
+      
+      # Memory and CPU limits
+      memory_limit: "16G"
+      memory_guarantee: "8G"
+      cpu_limit: 4
+      cpu_guarantee: 2
+      
+      # Storage configuration
+      storage_pvc_ensure: true
+      storage_capacity: "50Gi"
+      storage_access_modes:
+        - ReadWriteOnce
+      storage_class: "local-storage"
+      
+      # Mount shared projects directory
+      volumes:
+        - name: shared-projects
+          persistentVolumeClaim:
+            claimName: shared-projects-pvc
+      volume_mounts:
+        - name: shared-projects
+          mountPath: /shared/projects
+          readOnly: false
+      
+      # Profile list for different service types
+      profile_list:
+        - display_name: "JupyterLab (Recommended)"
+          description: "Full JupyterLab environment with GPU access"
+          default: true
+          kubespawner_override:
+            environment:
+              SERVICE_TYPE: "jupyter"
+            ports:
+              - name: notebook
+                containerPort: 8888
+                protocol: TCP
+        
+        - display_name: "VS Code Server"
+          description: "VS Code running in browser with GPU access"
+          kubespawner_override:
+            environment:
+              SERVICE_TYPE: "vscode"
+            ports:
+              - name: vscode
+                containerPort: 8080
+                protocol: TCP
+        
+        - display_name: "Terminal Only"
+          description: "Command-line access with GPU support"
+          kubespawner_override:
+            environment:
+              SERVICE_TYPE: "terminal"
+            cmd: ["/bin/bash", "-c", "sleep infinity"]
+      
+      # Node selector for GPU nodes (if you have multiple node types)
+      node_selector:
+        node.kubernetes.io/instance-type: gpu
+      
+      # Service account with necessary permissions
+      service_account: "jupyterhub-user"
+      
+      # Startup timeout
+      start_timeout: 600
+      
+      # Lifecycle hooks
+      lifecycle_hooks:
+        postStart:
+          exec:
+            command:
+              - "/bin/bash"
+              - "-c"
+              - |
+                # Set up user environment
+                mkdir -p /home/jovyan/.jupyter
+                echo "c.NotebookApp.allow_origin = '*'" > /home/jovyan/.jupyter/jupyter_notebook_config.py
+                echo "c.NotebookApp.disable_check_xsrf = True" >> /home/jovyan/.jupyter/jupyter_notebook_config.py
+                
+                # Initialize DVC in shared projects if not already done
+                if [ ! -d "/shared/projects/.dvc" ]; then
+                  cd /shared/projects
+                  git init || true
+                  dvc init || true
+                  dvc remote add -d localremote /mnt/data/dvc_remote || true
+                fi
+
+  # Database configuration for JupyterHub
+  db:
+    type: sqlite-pvc
+    pvc:
+      storageClassName: local-storage
+      accessModes:
+        - ReadWriteOnce
+      storage: 10Gi
+
+  # Networking
+  networkPolicy:
+    enabled: false
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    ports:
+      nodePort: 
+
+  # Security context
+  fsGid: 1000
+  uid: 1000
+  gid: 1000
+
+  # Resources for hub
+  resources:
+    limits:
+      cpu: 2
+      memory: 2Gi
+    requests:
+      cpu: 1
+      memory: 1Gi
+
+# Proxy configuration
+proxy:
+  secretToken: # Will be auto-generated
+  service:
+    type: ClusterIP
+  
+  # Resources for proxy
+  resources:
+    limits:
+      cpu: 1
+      memory: 1Gi
+    requests:
+      cpu: 0.5
+      memory: 512Mi
+
+# RBAC configuration
+rbac:
+  enable: true
+
+# Service account configuration
+serviceAccount:
+  create: true
+  name: jupyterhub
+
+# Scheduling
+scheduling:
+  podPriority:
+    enabled: false
+  userScheduler:
+    enabled: false
+  
+  userPods:
+    nodeAffinity:
+      matchNodePurpose: prefer
+
+# Culling configuration
+cull:
+  enabled: true
+  timeout: 3600  # 1 hour
+  every: 600     # Check every 10 minutes
+  
+  # Don't cull named servers
+  removeNamedServers: false
+  
+  # Maximum age of servers
+  maxAge: 21600  # 6 hours
+
+# Debug configuration
+debug:
+  enabled: false
+
+# Custom configuration
+custom:
+  # Additional environment variables for all containers
+  environment:
+    MLFLOW_TRACKING_URI: "http://mlflow-service.mlflow:5000"
+    DVC_CACHE_DIR: "/home/jovyan/.dvc/cache"
+    JUPYTER_ENABLE_LAB: "yes"
+
+# Ingress configuration will be handled separately 

@@ -1,0 +1,155 @@
+# Grafana configuration for ML Platform
+persistence:
+  enabled: true
+  storageClassName: "local-storage"
+  size: 50Gi
+
+# Resources
+resources:
+  limits:
+    cpu: 1
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Admin configuration
+adminUser: admin
+# adminPassword will be set via --set flag
+
+# Datasources
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus-server:80
+      access: proxy
+      isDefault: true
+
+# Dashboards
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: ''
+      type: file
+      disableDeletion: false
+      editable: true
+      options:
+        path: /var/lib/grafana/dashboards/default
+
+dashboards:
+  default:
+    # Kubernetes cluster monitoring
+    kubernetes-cluster:
+      gnetId: 7249
+      revision: 1
+      datasource: Prometheus
+    
+    # Node exporter
+    node-exporter:
+      gnetId: 1860
+      revision: 27
+      datasource: Prometheus
+    
+    # GPU monitoring (NVIDIA DCGM)
+    nvidia-gpu:
+      gnetId: 12239
+      revision: 1
+      datasource: Prometheus
+    
+    # Custom ML Platform dashboard
+    ml-platform:
+      json: |
+        {
+          "dashboard": {
+            "id": null,
+            "title": "ML Platform Overview",
+            "description": "Overview of ML Platform resources and usage",
+            "tags": ["ml-platform"],
+            "timezone": "browser",
+            "panels": [
+              {
+                "title": "Active JupyterHub Users",
+                "type": "stat",
+                "targets": [
+                  {
+                    "expr": "count(kube_pod_info{namespace=\"jupyterhub\", pod=~\"jupyter-.*\"})",
+                    "legendFormat": "Active Users"
+                  }
+                ],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+              },
+              {
+                "title": "GPU Utilization",
+                "type": "graph",
+                "targets": [
+                  {
+                    "expr": "DCGM_FI_DEV_GPU_UTIL",
+                    "legendFormat": "GPU {{gpu}}"
+                  }
+                ],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+              },
+              {
+                "title": "GPU Memory Usage",
+                "type": "graph", 
+                "targets": [
+                  {
+                    "expr": "DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL * 100",
+                    "legendFormat": "GPU {{gpu}} Memory %"
+                  }
+                ],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+              },
+              {
+                "title": "MLflow API Requests",
+                "type": "graph",
+                "targets": [
+                  {
+                    "expr": "rate(prometheus_http_requests_total{job=\"mlflow\"}[5m])",
+                    "legendFormat": "Requests/sec"
+                  }
+                ],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+              }
+            ],
+            "time": {
+              "from": "now-1h",
+              "to": "now"
+            },
+            "refresh": "30s"
+          }
+        }
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress will be configured separately
+
+# Plugins
+plugins:
+  - grafana-piechart-panel
+  - grafana-worldmap-panel
+
+# SMTP configuration (optional)
+smtp:
+  enabled: false
+
+# Security
+securityContext:
+  runAsUser: 472
+  runAsGroup: 472
+  fsGroup: 472
+
+# Image configuration
+image:
+  repository: grafana/grafana
+  tag: "10.2.0"
+  pullPolicy: IfNotPresent 

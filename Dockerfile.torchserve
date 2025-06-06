@@ -1,0 +1,38 @@
+FROM pytorch/torchserve:0.8.2-gpu
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+USER root
+
+# Install additional packages
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for MLflow integration
+RUN pip install --no-cache-dir \
+    mlflow==2.8.1 \
+    requests \
+    psycopg2-binary
+
+# Create model store directory
+RUN mkdir -p /mnt/models && \
+    chown -R model-server:model-server /mnt/models
+
+# Create TorchServe configuration
+COPY torchserve-config.properties /home/model-server/config.properties
+
+# Create startup script
+COPY torchserve-start.sh /usr/local/bin/torchserve-start.sh
+RUN chmod +x /usr/local/bin/torchserve-start.sh
+
+# Switch back to model-server user
+USER model-server
+
+# Expose ports
+EXPOSE 8080 8081 8082 7070 7071
+
+# Default command
+CMD ["/usr/local/bin/torchserve-start.sh"] 

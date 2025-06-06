@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torchserve
+  namespace: model-serving
+  labels:
+    app: torchserve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torchserve
+  template:
+    metadata:
+      labels:
+        app: torchserve
+    spec:
+      serviceAccountName: model-serving-sa
+      containers:
+      - name: torchserve
+        image: localhost:5000/torchserve:latest
+        imagePullPolicy: Always
+        ports:
+        - name: inference
+          containerPort: 8080
+          protocol: TCP
+        - name: management
+          containerPort: 8081
+          protocol: TCP
+        - name: metrics
+          containerPort: 8082
+          protocol: TCP
+        env:
+        - name: MLFLOW_TRACKING_URI
+          valueFrom:
+            configMapKeyRef:
+              name: model-registry-config
+              key: mlflow_tracking_uri
+        volumeMounts:
+        - name: model-store
+          mountPath: /mnt/models
+        - name: mlflow-artifacts
+          mountPath: /mnt/mlflow-artifacts
+          readOnly: true
+        resources:
+          requests:
+            cpu: 1
+            memory: 4Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: 4
+            memory: 16Gi
+            nvidia.com/gpu: 1
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ping  
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+      volumes:
+      - name: model-store
+        persistentVolumeClaim:
+          claimName: model-store-pvc
+      - name: mlflow-artifacts
+        persistentVolumeClaim:
+          claimName: mlflow-artifacts-pvc
+      restartPolicy: Always
+      nodeSelector:
+        node.kubernetes.io/instance-type: gpu
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule 
