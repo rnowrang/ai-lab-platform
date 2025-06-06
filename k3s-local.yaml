@@ -1,0 +1,8 @@
+# k3s configuration for local development
+cluster-init: true
+disable:
+  - traefik  # We'll use our own ingress
+write-kubeconfig-mode: 644
+node-label:
+  - "node.kubernetes.io/instance-type=gpu-dev"
+  - "ml-platform.local/gpu-type=rtx3090"

@@ -19,8 +19,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     build-essential \
-    nodejs \
-    npm \
     htop \
     vim \
     tmux \
@@ -28,6 +26,10 @@ RUN apt-get update && apt-get install -y \
     sudo \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 18+ for JupyterLab
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
 
 # Install code-server (VS Code in browser)
 RUN curl -fsSL https://code-server.dev/install.sh | sh
@@ -94,9 +96,8 @@ RUN pip install \
     lightning \
     torchmetrics
 
-# Set up JupyterLab extensions
-RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager --no-build && \
-    jupyter lab build --dev-build=False --minimize=False
+# Configure JupyterLab (extensions are now installed via pip packages)
+RUN jupyter lab --generate-config
 
 # Configure code-server
 RUN mkdir -p /home/$NB_USER/.config/code-server

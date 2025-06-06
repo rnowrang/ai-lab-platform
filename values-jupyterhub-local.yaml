@@ -1,0 +1,90 @@
+# JupyterHub configuration for local development
+hub:
+  config:
+    JupyterHub:
+      authenticator_class: jupyterhub.auth.DummyAuthenticator  # No OAuth for local
+      spawner_class: kubespawner.KubeSpawner
+    DummyAuthenticator:
+      password: "dev"  # Simple password for local development
+    KubeSpawner:
+      image: "localhost:5000/ml-base:latest"
+      image_pull_policy: "Always"
+      
+      # GPU allocation - flexible for local development
+      profile_list:
+        - display_name: "Light Development (No GPU)"
+          description: "CPU-only development"
+          default: false
+          kubespawner_override:
+            extra_resource_limits: {}
+            extra_resource_guarantees: {}
+            
+        - display_name: "GPU Development (RTX 3090)"
+          description: "Full GPU access for training"
+          default: true
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "1"
+            extra_resource_guarantees:
+              nvidia.com/gpu: "1"
+            environment:
+              NVIDIA_VISIBLE_DEVICES: "all"
+              
+        - display_name: "Shared GPU (for testing)"
+          description: "Shared GPU access for light workloads"
+          default: false
+          kubespawner_override:
+            extra_resource_limits:
+              nvidia.com/gpu: "1"
+            extra_resource_guarantees: {}
+            environment:
+              NVIDIA_VISIBLE_DEVICES: "0"
+              CUDA_MPS_ENABLE: "1"  # Enable Multi-Process Service
+      
+      # Larger resource limits for RTX 3090
+      memory_limit: "32G"    # More memory for local development
+      memory_guarantee: "16G"
+      cpu_limit: 8           # More CPU cores
+      cpu_guarantee: 4
+      
+      # Local storage
+      storage_pvc_ensure: true
+      storage_capacity: "100Gi"  # Larger storage for local
+      storage_class: "local-storage"
+      
+      # Mount local projects
+      volumes:
+        - name: shared-projects
+          hostPath:
+            path: /mnt/c/Users/rnowrang/dev/ai-lab/local-data/projects
+        - name: local-workspace
+          hostPath:
+            path: /mnt/c/Users/rnowrang/dev/ai-lab
+      volume_mounts:
+        - name: shared-projects
+          mountPath: /shared/projects
+        - name: local-workspace
+          mountPath: /workspace
+          readOnly: false
+
+  # Local database
+  db:
+    type: sqlite-pvc
+    pvc:
+      storageClassName: local-storage
+      storage: 10Gi
+
+# Simpler proxy for local
+proxy:
+  service:
+    type: NodePort
+    nodePorts:
+      http: 30080
+
+# No RBAC needed for local development
+rbac:
+  enabled: false
+
+# Disable culling for development
+cull:
+  enabled: false
