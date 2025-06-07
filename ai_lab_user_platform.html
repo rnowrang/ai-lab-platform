@@ -502,22 +502,8 @@
     <script>
         let currentUser = null;
         let selectedGPUCount = 1;
-        let mockEnvironments = [
-            {
-                name: 'pytorch-demo-env',
-                type: 'jupyter',
-                gpus: 1,
-                status: 'running',
-                url: 'http://localhost:8888'
-            },
-            {
-                name: 'tensorflow-experiment', 
-                type: 'jupyter',
-                gpus: 2,
-                status: 'starting',
-                url: null
-            }
-        ];
+        let environments = [];
+        const API_BASE = 'http://localhost:5555';
 
         function showAuthTab(tab) {
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -581,17 +567,33 @@
             document.getElementById('authSection').classList.remove('active');
             document.getElementById('dashboardSection').classList.add('active');
             updateQuotaDisplay();
+            updateEnvironmentsList();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                updateQuotaDisplay();
+                updateEnvironmentsList();
+            }, 30000);
         }
 
-        function updateQuotaDisplay() {
-            const usedGPUs = mockEnvironments.filter(env => env.status === 'running').reduce((sum, env) => sum + env.gpus, 0);
-            const activeEnvs = mockEnvironments.filter(env => env.status !== 'stopped').length;
-            
-            document.getElementById('gpuUsage').textContent = `${usedGPUs}/${currentUser.gpuQuota} GPUs`;
-            document.getElementById('envUsage').textContent = `${activeEnvs}/${currentUser.envQuota} Environments`;
-            
-            document.getElementById('gpuProgress').style.width = `${(usedGPUs / currentUser.gpuQuota) * 100}%`;
-            document.getElementById('envProgress').style.width = `${(activeEnvs / currentUser.envQuota) * 100}%`;
+        async function updateQuotaDisplay() {
+            try {
+                const response = await fetch(`${API_BASE}/api/resources/usage`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Error fetching usage:', data.error);
+                    return;
+                }
+                
+                document.getElementById('gpuUsage').textContent = `${data.current_gpus}/${data.quota.max_gpus} GPUs`;
+                document.getElementById('envUsage').textContent = `${data.current_environments}/${data.quota.max_environments} Environments`;
+                
+                document.getElementById('gpuProgress').style.width = `${(data.current_gpus / data.quota.max_gpus) * 100}%`;
+                document.getElementById('envProgress').style.width = `${(data.current_environments / data.quota.max_environments) * 100}%`;
+            } catch (error) {
+                console.error('Error updating quota:', error);
+            }
         }
 
         function selectTemplate(template) {
@@ -634,7 +636,7 @@
             document.getElementById('createModal').classList.remove('active');
         }
 
-        function createEnvironment() {
+        async function createEnvironment() {
             const envName = document.getElementById('envName').value;
             const envType = document.getElementById('envType').value;
             
@@ -643,62 +645,153 @@
                 return;
             }
             
-            // Mock environment creation
-            const newEnv = {
-                name: envName,
-                type: envType,
-                gpus: selectedGPUCount,
-                status: 'starting',
-                url: null
-            };
-            
-            mockEnvironments.push(newEnv);
-            updateEnvironmentsList();
-            updateQuotaDisplay();
-            closeCreateModal();
-            showAlert(`Environment "${envName}" is being created...`, 'success');
-            
-            // Simulate environment starting
-            setTimeout(() => {
-                newEnv.status = 'running';
-                newEnv.url = `http://localhost:${8888 + Math.floor(Math.random() * 100)}`;
+            try {
+                showAlert(`Creating environment "${envName}"...`, 'success');
+                
+                const response = await fetch(`${API_BASE}/api/environments/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: envName,
+                        type: envType === 'vscode' ? 'vscode' : 'pytorch-jupyter',
+                        gpu_count: selectedGPUCount
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    showAlert(`Error: ${data.error}`, 'error');
+                    return;
+                }
+                
+                closeCreateModal();
+                showAlert(`Environment "${envName}" created successfully!`, 'success');
                 updateEnvironmentsList();
                 updateQuotaDisplay();
-                showAlert(`Environment "${envName}" is now running!`, 'success');
-            }, 5000);
-        }
-
-        function updateEnvironmentsList() {
-            const container = document.getElementById('environmentsList');
-            container.innerHTML = '';
-            
-            mockEnvironments.forEach(env => {
-                const statusClass = `status-${env.status}`;
-                const statusText = env.status.charAt(0).toUpperCase() + env.status.slice(1);
-                const actionButton = env.status === 'running' && env.url ? 
-                    `<button class="btn" style="width: auto; margin-left: 10px;" onclick="openEnvironment('${env.name}')">Open</button>` :
-                    `<button class="btn btn-secondary" style="width: auto; margin-left: 10px;" disabled>${statusText}...</button>`;
                 
-                container.innerHTML += `
-                    <div class="environment-item">
-                        <div class="env-info">
-                            <h4>${env.name}</h4>
-                            <p>${env.type.toUpperCase()} • ${env.gpus}x RTX 3090 • 4 cores • 16GB RAM</p>
-                        </div>
-                        <div>
-                            <span class="env-status ${statusClass}">${statusText}</span>
-                            ${actionButton}
-                        </div>
-                    </div>
-                `;
-            });
+            } catch (error) {
+                console.error('Error creating environment:', error);
+                showAlert('Error creating environment', 'error');
+            }
         }
 
-        function openEnvironment(name) {
-            const env = mockEnvironments.find(e => e.name === name);
-            if (env && env.url) {
-                // For demo, redirect to existing JupyterLab
-                window.open('http://localhost:8888', '_blank');
+        async function updateEnvironmentsList() {
+            try {
+                const response = await fetch(`${API_BASE}/api/environments`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Error fetching environments:', data.error);
+                    return;
+                }
+                
+                environments = data.environments;
+                const container = document.getElementById('environmentsList');
+                container.innerHTML = '';
+                
+                environments.forEach(env => {
+                    const statusClass = `status-${env.status === 'running' ? 'running' : env.status === 'exited' ? 'stopped' : 'starting'}`;
+                    const statusText = env.status.charAt(0).toUpperCase() + env.status.slice(1);
+                    
+                    let actionButtons = '';
+                    if (env.status === 'running') {
+                        actionButtons = `
+                            <button class="btn" style="width: auto; margin-left: 5px;" onclick="openEnvironment('${env.id}')">Open</button>
+                            <button class="btn btn-secondary" style="width: auto; margin-left: 5px; background: #dc3545;" onclick="stopEnvironment('${env.id}')">Stop</button>
+                        `;
+                    } else if (env.status === 'exited') {
+                        actionButtons = `
+                            <button class="btn" style="width: auto; margin-left: 5px;" onclick="startEnvironment('${env.id}')">Start</button>
+                        `;
+                    } else {
+                        actionButtons = `<button class="btn btn-secondary" style="width: auto; margin-left: 10px;" disabled>${statusText}...</button>`;
+                    }
+                    
+                    container.innerHTML += `
+                        <div class="environment-item">
+                            <div class="env-info">
+                                <h4>${env.name}</h4>
+                                <p>${env.type.toUpperCase()} • RTX 3090 • Running on ${env.access_url}</p>
+                            </div>
+                            <div>
+                                <span class="env-status ${statusClass}">${statusText}</span>
+                                ${actionButtons}
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (error) {
+                console.error('Error updating environments list:', error);
+            }
+        }
+
+        async function openEnvironment(envId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/environments/${envId}/access`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    showAlert(`Error: ${data.error}`, 'error');
+                    return;
+                }
+                
+                // Open the correct URL based on environment type
+                window.open(data.access_url, '_blank');
+                showAlert(`Opening ${data.type} environment...`, 'success');
+            } catch (error) {
+                console.error('Error opening environment:', error);
+                showAlert('Error opening environment', 'error');
+            }
+        }
+
+        async function startEnvironment(envId) {
+            try {
+                showAlert('Starting environment...', 'success');
+                const response = await fetch(`${API_BASE}/api/environments/${envId}/start`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.error) {
+                    showAlert(`Error: ${data.error}`, 'error');
+                    return;
+                }
+                
+                showAlert('Environment started successfully!', 'success');
+                updateEnvironmentsList();
+                updateQuotaDisplay();
+            } catch (error) {
+                console.error('Error starting environment:', error);
+                showAlert('Error starting environment', 'error');
+            }
+        }
+
+        async function stopEnvironment(envId) {
+            if (!confirm('Are you sure you want to stop this environment? This will release the GPU resources.')) {
+                return;
+            }
+            
+            try {
+                showAlert('Stopping environment...', 'success');
+                const response = await fetch(`${API_BASE}/api/environments/${envId}/stop`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.error) {
+                    showAlert(`Error: ${data.error}`, 'error');
+                    return;
+                }
+                
+                showAlert('Environment stopped and GPU resources released!', 'success');
+                updateEnvironmentsList();
+                updateQuotaDisplay();
+            } catch (error) {
+                console.error('Error stopping environment:', error);
+                showAlert('Error stopping environment', 'error');
             }
         }
 
@@ -719,8 +812,8 @@
             }, 4000);
         }
 
-        // Initialize
-        updateEnvironmentsList();
+        // Initialize - load environments when page loads
+        // updateEnvironmentsList(); // Don't load until user logs in
     </script>
 </body>
 </html>

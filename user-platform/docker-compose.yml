@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # Backend API
+  user-platform-api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/ai_lab_users
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
+      - KUBERNETES_IN_CLUSTER=false
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ~/.kube:/root/.kube:ro  # For k8s access
+      - /var/run/docker.sock:/var/run/docker.sock  # For Docker access
+    networks:
+      - ai-lab-network
+
+  # Frontend
+  user-platform-web:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - user-platform-api
+    networks:
+      - ai-lab-network
+
+  # User Database (separate from MLflow)
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=ai_lab_users
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - user_platform_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Different port to avoid conflict
+    networks:
+      - ai-lab-network
+
+  # Redis for session management and queues
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"  # Different port to avoid conflict
+    volumes:
+      - user_platform_redis_data:/data
+    networks:
+      - ai-lab-network
+
+  # Background worker for resource management
+  worker:
+    build: ./backend
+    command: celery -A app.worker worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/ai_lab_users
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ~/.kube:/root/.kube:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ai-lab-network
+
+volumes:
+  user_platform_postgres_data:
+  user_platform_redis_data:
+
+networks:
+  ai-lab-network:
+    external: true

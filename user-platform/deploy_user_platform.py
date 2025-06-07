@@ -425,7 +425,7 @@ if __name__ == "__main__":
     main()
 """
     
-    with open("user-platform/demo.py", "w") as f:
+    with open("user-platform/demo.py", "w", encoding="utf-8") as f:
         f.write(demo_script.strip())
     
     os.chmod("user-platform/demo.py", 0o755)
