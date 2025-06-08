@@ -1,0 +1,6 @@
+flask>=2.0.1
+flask-cors>=3.0.10
+docker>=5.0.3
+psutil>=5.8.0
+gputil>=1.4.0
+requests>=2.26.0 
