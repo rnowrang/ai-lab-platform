@@ -904,7 +904,7 @@ def start_environment(env_id):
         return jsonify({"error": "Docker not available"}), 500
     
     # Check user ownership
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     user_id = data.get('user_id')
     
     if user_id and not resource_manager.user_owns_environment(user_id, env_id):
@@ -926,7 +926,7 @@ def stop_environment(env_id):
         return jsonify({"error": "Docker not available"}), 500
     
     # Check user ownership
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     user_id = data.get('user_id')
     
     if user_id and not resource_manager.user_owns_environment(user_id, env_id):
@@ -955,7 +955,8 @@ def delete_environment(env_id):
         return jsonify({"error": "Docker not available"}), 500
     
     # Check user ownership
-    user_id = request.args.get('user_id') or (request.json or {}).get('user_id')
+    json_data = request.get_json(silent=True) or {}
+    user_id = request.args.get('user_id') or json_data.get('user_id')
     
     if user_id and not resource_manager.user_owns_environment(user_id, env_id):
         return jsonify({"error": "Access denied - you don't own this environment"}), 403
@@ -1541,7 +1542,7 @@ def pause_environment(env_id):
         return jsonify({"error": "Docker not available"}), 500
     
     # Check user ownership
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     user_id = data.get('user_id')
     
     if user_id and not resource_manager.user_owns_environment(user_id, env_id):
@@ -1574,7 +1575,7 @@ def resume_environment(env_id):
         return jsonify({"error": "Docker not available"}), 500
     
     # Check user ownership
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     user_id = data.get('user_id')
     
     if user_id and not resource_manager.user_owns_environment(user_id, env_id):

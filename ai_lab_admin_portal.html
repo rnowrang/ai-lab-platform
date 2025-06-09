@@ -828,7 +828,10 @@
 
             try {
                 const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/delete`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
                 const data = await response.json();
 
