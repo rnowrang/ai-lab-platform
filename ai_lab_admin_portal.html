@@ -441,6 +441,9 @@
                     break;
                 case 'environments':
                     loadAllEnvironments();
+                    // Auto-refresh every 15 seconds
+                    if (window.envInterval) clearInterval(window.envInterval);
+                    window.envInterval = setInterval(loadAllEnvironments, 15000);
                     break;
                 case 'data':
                     loadSharedDatasets();
@@ -578,6 +581,12 @@
                                 </td>
                                 <td>${new Date(env.created).toLocaleDateString()}</td>
                                 <td>
+                                    ${env.status === 'running' ? `
+                                        <button class="btn btn-warning" onclick="pauseEnvironment('${env.id}')">Pause</button>
+                                    ` : ''}
+                                    ${env.status === 'paused' ? `
+                                        <button class="btn btn-success" onclick="resumeEnvironment('${env.id}')">Resume</button>
+                                    ` : ''}
                                     <button class="btn btn-danger" onclick="deleteEnvironment('${env.id}')">Delete</button>
                                 </td>
                             </tr>
@@ -812,6 +821,65 @@
 
         function closeModal(modalId) {
             document.getElementById(modalId).classList.remove('active');
+        }
+
+        async function deleteEnvironment(envId) {
+            if (!confirm(`Are you sure you want to delete environment ${envId}?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/delete`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showAlert(`Error deleting environment: ${data.error}`, 'error');
+                } else {
+                    showAlert(data.message, 'success');
+                    loadAllEnvironments();
+                }
+            } catch (error) {
+                console.error('Error deleting environment:', error);
+                showAlert('Error deleting environment', 'error');
+            }
+        }
+
+        async function pauseEnvironment(envId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/pause`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showAlert(`Error pausing environment: ${data.error}`, 'error');
+                } else {
+                    showAlert(data.message, 'success');
+                    loadAllEnvironments();
+                }
+            } catch (error) {
+                console.error('Error pausing environment:', error);
+                showAlert('Error pausing environment', 'error');
+            }
+        }
+
+        async function resumeEnvironment(envId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/resume`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showAlert(`Error resuming environment: ${data.error}`, 'error');
+                } else {
+                    showAlert(data.message, 'success');
+                    loadAllEnvironments();
+                }
+            } catch (error) {
+                console.error('Error resuming environment:', error);
+                showAlert('Error resuming environment', 'error');
+            }
         }
 
         // Initialize admin portal
