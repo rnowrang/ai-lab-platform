@@ -1,0 +1,150 @@
+Based on everything we've built together, here's a comprehensive prompt for the next AI coding agent to help you deploy your AI Lab Platform in production:
+
+---
+
+# 🚀 **AI Lab Platform Production Deployment on Ubuntu Server**
+
+## **Project Overview**
+I need to deploy an AI Lab Platform on an Ubuntu server with 4 GPUs for production use. This is a multi-user ML platform with dynamic GPU allocation that includes:
+
+### **Current Architecture:**
+- **Frontend**: Modern dark-themed HTML/CSS/JS user portal (`ai_lab_user_platform.html`)
+- **Backend**: Flask API (`ai_lab_backend.py`) with Docker container management
+- **Environment Management**: Docker-based ML environments with GPU support
+- **Monitoring**: MLflow, Prometheus, Grafana integration
+- **Authentication**: User login/logout system with user info panels
+- **Templates**: Pre-configured environments (VSCode, PyTorch, TensorFlow, Jupyter, etc.)
+
+### **Key Features Built:**
+- ✅ Dark theme responsive UI with glassmorphism design
+- ✅ User authentication and session management  
+- ✅ Environment templates with 4-column grid layout
+- ✅ Real-time resource monitoring and quota management
+- ✅ Direct links to monitoring tools (MLflow:5000, Prometheus:9090, Grafana:3000)
+- ✅ Dynamic port allocation for environments
+- ✅ Environment lifecycle management (create, start, stop, access)
+
+## **Production Requirements**
+
+### **Server Specifications:**
+- **OS**: Ubuntu Server (latest LTS)
+- **Hardware**: 4 GPUs available for container allocation
+- **Use Case**: Multi-user ML development and experiment tracking
+
+### **Production Deployment Goals:**
+1. **SSL/HTTPS** setup with proper domain configuration
+2. **Docker/Docker Compose** orchestration for all services
+3. **NVIDIA Docker** runtime for GPU container access
+4. **Production Database** (PostgreSQL) for MLflow tracking
+5. **Reverse Proxy** (Nginx) for load balancing and SSL termination
+6. **Monitoring Stack** with proper persistence and alerting
+7. **User Authentication** with secure session management
+8. **Backup/Recovery** procedures for data persistence
+9. **Security Hardening** and firewall configuration
+10. **Performance Optimization** for multi-user GPU allocation
+
+## **Current Codebase Status**
+
+### **GitHub Repository:**
+- **URL**: https://github.com/rnowrang/ai-lab-platform
+- **Branch**: `main` 
+- **Status**: All features committed and pushed
+
+### **Key Files to Deploy:**
+- `ai_lab_user_platform.html` - Main user interface
+- `ai_lab_backend.py` - Flask API server  
+- Various ML workflow and environment management scripts
+- Docker configurations for ML environments
+
+### **Current Issues to Address:**
+- Docker client connection issues on Windows (needs Ubuntu Docker setup)
+- Environment creation endpoints returning 500 errors (needs debugging)
+- Missing production configuration files
+- No SSL/domain setup
+- Development-only database configuration
+
+## **Deployment Tasks Needed**
+
+### **1. Infrastructure Setup**
+- [ ] Install Docker and Docker Compose on Ubuntu
+- [ ] Install and configure NVIDIA Docker runtime
+- [ ] Set up production directory structure
+- [ ] Configure firewall and security groups
+- [ ] Set up domain/subdomain DNS configuration
+
+### **2. Database & Persistence**
+- [ ] Set up PostgreSQL for MLflow tracking server
+- [ ] Configure persistent volumes for container data
+- [ ] Set up backup procedures for databases and user data
+- [ ] Configure data retention policies
+
+### **3. Container Orchestration**  
+- [ ] Create production Docker Compose configuration
+- [ ] Set up service networking between containers
+- [ ] Configure GPU resource allocation across containers
+- [ ] Implement health checks and restart policies
+
+### **4. Web Server & SSL**
+- [ ] Configure Nginx reverse proxy
+- [ ] Set up SSL certificates (Let's Encrypt or corporate certs)
+- [ ] Configure HTTPS redirects and security headers
+- [ ] Set up domain routing for different services
+
+### **5. Monitoring & Logging**
+- [ ] Deploy Prometheus with persistent storage
+- [ ] Deploy Grafana with custom dashboards
+- [ ] Set up log aggregation and retention
+- [ ] Configure alerting for system health
+
+### **6. Application Configuration**
+- [ ] Update Flask app for production settings
+- [ ] Configure environment variables and secrets
+- [ ] Set up user authentication backend
+- [ ] Test all environment templates with GPU access
+
+### **7. Security & Access Control**
+- [ ] Implement proper user authentication
+- [ ] Set up network security and access controls
+- [ ] Configure API rate limiting
+- [ ] Set up audit logging
+
+### **8. Testing & Validation**
+- [ ] Test multi-user GPU allocation
+- [ ] Validate all environment templates
+- [ ] Test MLflow experiment tracking
+- [ ] Perform load testing
+
+## **Expected Production Architecture**
+```
+[Users] → [Nginx/SSL] → [AI Lab Frontend] → [Flask Backend] → [Docker Environments]
+                     ↓
+                [PostgreSQL] ← [MLflow Server]
+                     ↓  
+           [Prometheus] → [Grafana]
+```
+
+## **Specific Help Needed**
+1. **Create production-ready Docker Compose file** with all services
+2. **Configure NVIDIA Docker** for GPU access in containers  
+3. **Set up Nginx configuration** for reverse proxy and SSL
+4. **Deploy PostgreSQL** and configure MLflow tracking server
+5. **Fix backend API issues** causing 500 errors
+6. **Implement proper authentication** backend
+7. **Set up monitoring stack** with dashboards
+8. **Create deployment scripts** for easy updates
+9. **Configure backup/recovery** procedures
+10. **Test end-to-end functionality** with multiple users
+
+## **Success Criteria**
+- [ ] Platform accessible via HTTPS with valid SSL
+- [ ] Multiple users can create and access GPU environments simultaneously  
+- [ ] All monitoring tools working with persistent data
+- [ ] Environment templates deploy successfully with GPU access
+- [ ] MLflow tracking experiments properly
+- [ ] System properly secured and production-ready
+
+Please help me create a clean, production-ready deployment of this AI Lab Platform on Ubuntu with proper security, monitoring, and multi-user GPU support.
+
+---
+
+This comprehensive prompt should give the next AI coding agent everything they need to help you deploy your AI Lab Platform in production! 🚀
