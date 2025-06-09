@@ -1075,8 +1075,10 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         elif "jupyter" in env_type:
             environment["SERVICE_TYPE"] = "jupyter"
         
-        # Set MLflow tracking URI to use the correct service name
+        # Set MLflow tracking URI - use mlflow service name for Docker containers on same network
         environment["MLFLOW_TRACKING_URI"] = "http://mlflow:5000"
+        # Set MLflow artifact URI to shared volume accessible by all containers
+        environment["MLFLOW_ARTIFACT_URI"] = "file:///shared/mlflow-artifacts"
         
         # Dynamic port allocation using ResourceManager
         if env_type == "vscode":
@@ -1108,7 +1110,8 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         
         volumes = {
             str(user_data_path): {'bind': '/home/jovyan/data', 'mode': 'rw'},
-            str(shared_data_path): {'bind': '/home/jovyan/shared', 'mode': 'ro'}
+            str(shared_data_path): {'bind': '/home/jovyan/shared', 'mode': 'ro'},
+            'ai-lab_mlflow_artifacts': {'bind': '/shared/mlflow-artifacts', 'mode': 'rw'}
         }
         
         # Add GPU device requests if required

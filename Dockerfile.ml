@@ -108,7 +108,7 @@ COPY --chown=$NB_USER:$NB_GID start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 
 # Set up home directory
-RUN mkdir -p /home/$NB_USER/work && \
+RUN mkdir -p /home/$NB_USER/work /home/$NB_USER/mlflow-artifacts && \
     chown -R $NB_USER:$NB_GID /home/$NB_USER
 
 # Switch to user
@@ -116,7 +116,8 @@ USER $NB_USER
 WORKDIR /home/$NB_USER
 
 # Set default environment variables
-ENV MLFLOW_TRACKING_URI=http://mlflow-service.mlflow:5000
+ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+ENV MLFLOW_ARTIFACT_URI=file:///home/jovyan/mlflow-artifacts
 ENV DVC_CACHE_DIR=/home/$NB_USER/.dvc/cache
 
 # Expose ports
