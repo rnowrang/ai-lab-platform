@@ -1108,6 +1108,13 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
             str(shared_data_path): {'bind': '/home/jovyan/shared', 'mode': 'ro'}
         }
         
+        # Add GPU device requests if required
+        device_requests = []
+        if config.get("resource_requirements", {}).get("gpu_required"):
+            device_requests.append(
+                docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
+            )
+            
         try:
             # Create and start container with resource limits and data volumes
             container = docker_client.containers.run(
@@ -1116,6 +1123,7 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
                 ports=ports,
                 environment=environment,
                 volumes=volumes,
+                device_requests=device_requests,
                 detach=True,
                 restart_policy={"Name": "unless-stopped"},
                 mem_limit=resource_limits["memory"],
