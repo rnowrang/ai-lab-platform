@@ -1158,24 +1158,88 @@ def create_environment():
 
 @app.route('/api/resources/usage')
 def get_resource_usage():
-    """Get current resource usage"""
+    """Get current system-wide resource usage"""
     if not docker_client:
         return jsonify({"error": "Docker not available"}), 500
     
     try:
         containers = docker_client.containers.list()
-        running_containers = len([c for c in containers if c.name.startswith('ai-lab-')])
         
-        # Mock GPU usage (you can enhance this with nvidia-smi)
-        gpu_usage = min(running_containers, 4)  # Assuming max 4 GPUs
+        # Count only actual user environments (not system services)
+        user_environments = []
+        for container in containers:
+            if (container.name.startswith('ai-lab-') and 
+                any(x in container.name for x in ['jupyter', 'vscode', 'pytorch', 'tensorflow']) and
+                container.name not in ['ai-lab-postgres-1', 'ai-lab-prometheus-1', 'ai-lab-grafana-1']):
+                user_environments.append(container)
+        
+        running_user_environments = len([c for c in user_environments if c.status == 'running'])
+        paused_user_environments = len([c for c in user_environments if c.status == 'paused'])
+        total_user_environments = len(user_environments)
+        
+        # Get real GPU usage and availability
+        gpu_stats = {
+            "total_gpus": 0,
+            "available_gpus": 0,
+            "gpu_utilization": 0,
+            "gpu_memory_used": 0,
+            "gpu_memory_total": 0
+        }
+        
+        try:
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            gpu_stats["total_gpus"] = len(gpus)
+            gpu_stats["available_gpus"] = len([gpu for gpu in gpus if gpu.memoryUtil < 0.9])
+            
+            if gpus:
+                avg_utilization = sum(gpu.load for gpu in gpus) / len(gpus) * 100
+                total_memory_used = sum(gpu.memoryUsed for gpu in gpus)
+                total_memory_total = sum(gpu.memoryTotal for gpu in gpus)
+                
+                gpu_stats["gpu_utilization"] = round(avg_utilization, 1)
+                gpu_stats["gpu_memory_used"] = round(total_memory_used, 1)
+                gpu_stats["gpu_memory_total"] = round(total_memory_total, 1)
+        except Exception as e:
+            # Fallback if GPUtil not available or no GPUs
+            gpu_stats["error"] = str(e)
+        
+        # Get memory usage
+        import psutil
+        memory = psutil.virtual_memory()
+        memory_stats = {
+            "total_gb": round(memory.total / (1024**3), 1),
+            "available_gb": round(memory.available / (1024**3), 1),
+            "used_gb": round((memory.total - memory.available) / (1024**3), 1),
+            "percent_used": round(memory.percent, 1)
+        }
+        
+        # Get CPU usage
+        cpu_count = psutil.cpu_count()
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Calculate available resources based on system limits and current usage
+        max_environments = 10  # Default system limit
+        max_memory_gb = memory_stats["total_gb"]
+        max_gpus = gpu_stats["total_gpus"] if gpu_stats["total_gpus"] > 0 else 4  # Fallback
         
         return jsonify({
-            "current_gpus": gpu_usage,
-            "current_environments": running_containers,
-            "quota": {
-                "max_gpus": 4,
-                "max_environments": 10,
-                "max_memory_gb": 64
+            "environments": {
+                "running": running_user_environments,
+                "paused": paused_user_environments,
+                "total": total_user_environments,
+                "available": max(0, max_environments - total_user_environments)
+            },
+            "gpu": gpu_stats,
+            "memory": memory_stats,
+            "cpu": {
+                "cores": cpu_count,
+                "utilization_percent": round(cpu_percent, 1)
+            },
+            "limits": {
+                "max_environments": max_environments,
+                "max_gpus": max_gpus,
+                "max_memory_gb": max_memory_gb
             }
         })
         

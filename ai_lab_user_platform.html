@@ -589,11 +589,32 @@
                     return;
                 }
                 
-                document.getElementById('gpuUsage').textContent = `${data.current_gpus}/${data.quota.max_gpus} GPUs`;
-                document.getElementById('envUsage').textContent = `${data.current_environments}/${data.quota.max_environments} Environments`;
+                // Use new response structure with proper GPU and environment counts
+                const gpuInUse = data.gpu ? (data.gpu.total_gpus - data.gpu.available_gpus) : 0;
+                const maxGpus = data.limits ? data.limits.max_gpus : 4;
+                const envInUse = data.environments ? data.environments.total : 0;
+                const maxEnvs = data.limits ? data.limits.max_environments : 10;
                 
-                document.getElementById('gpuProgress').style.width = `${(data.current_gpus / data.quota.max_gpus) * 100}%`;
-                document.getElementById('envProgress').style.width = `${(data.current_environments / data.quota.max_environments) * 100}%`;
+                // Update display with accurate information
+                document.getElementById('gpuUsage').textContent = `${gpuInUse}/${maxGpus} GPUs`;
+                document.getElementById('envUsage').textContent = `${envInUse}/${maxEnvs} Environments`;
+                
+                // Update progress bars
+                document.getElementById('gpuProgress').style.width = `${(gpuInUse / maxGpus) * 100}%`;
+                document.getElementById('envProgress').style.width = `${(envInUse / maxEnvs) * 100}%`;
+                
+                // Add GPU utilization info if available
+                if (data.gpu && data.gpu.gpu_utilization !== undefined) {
+                    const gpuUtil = document.getElementById('gpuUsage');
+                    gpuUtil.title = `GPU Utilization: ${data.gpu.gpu_utilization}% | Memory: ${data.gpu.gpu_memory_used}MB/${data.gpu.gpu_memory_total}MB`;
+                }
+                
+                // Add environment status breakdown if available
+                if (data.environments) {
+                    const envUtil = document.getElementById('envUsage');
+                    envUtil.title = `Running: ${data.environments.running} | Paused: ${data.environments.paused} | Available: ${data.environments.available}`;
+                }
+                
             } catch (error) {
                 console.error('Error updating quota:', error);
             }
