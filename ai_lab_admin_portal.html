@@ -847,7 +847,10 @@
         async function pauseEnvironment(envId) {
             try {
                 const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/pause`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
                 const data = await response.json();
 
@@ -866,7 +869,10 @@
         async function resumeEnvironment(envId) {
             try {
                 const response = await fetch(`${API_BASE}/api/environments/${encodeURIComponent(envId)}/resume`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
                 const data = await response.json();
 
