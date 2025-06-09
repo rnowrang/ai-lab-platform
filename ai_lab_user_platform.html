@@ -557,6 +557,111 @@
             border: none;
             box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
         }
+        
+        /* Monitoring Tools Section */
+        .monitoring-tools {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px solid rgba(55, 65, 81, 0.5);
+        }
+        
+        .monitoring-tools h3 {
+            color: #e5e7eb;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .tool-link {
+            background: rgba(55, 65, 81, 0.6);
+            border: 2px solid #4b5563;
+            border-radius: 12px;
+            padding: 25px 20px;
+            text-align: center;
+            text-decoration: none;
+            color: #e5e7eb;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .tool-link:hover {
+            border-color: #6366f1;
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.15);
+            color: #ffffff;
+            text-decoration: none;
+        }
+        
+        .tool-icon {
+            font-size: 2.5rem;
+            margin-bottom: 5px;
+        }
+        
+        .tool-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .tool-description {
+            font-size: 0.85rem;
+            color: #9ca3af;
+            line-height: 1.4;
+        }
+        
+        .mlflow-link {
+            border-color: #f59e0b;
+        }
+        
+        .mlflow-link:hover {
+            border-color: #fbbf24;
+            box-shadow: 0 8px 25px rgba(245, 158, 11, 0.15);
+        }
+        
+        .prometheus-link {
+            border-color: #ef4444;
+        }
+        
+        .prometheus-link:hover {
+            border-color: #f87171;
+            box-shadow: 0 8px 25px rgba(239, 68, 68, 0.15);
+        }
+        
+        .grafana-link {
+            border-color: #f97316;
+        }
+        
+        .grafana-link:hover {
+            border-color: #fb923c;
+            box-shadow: 0 8px 25px rgba(249, 115, 22, 0.15);
+        }
+        
+        @media (max-width: 768px) {
+            .tools-grid {
+                grid-template-columns: 1fr;
+                gap: 15px;
+                max-width: 400px;
+            }
+            
+            .tool-link {
+                padding: 20px 15px;
+            }
+            
+            .tool-icon {
+                font-size: 2rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -658,6 +763,30 @@
                     <div class="environment-item" style="text-align: center; padding: 40px;">
                         <p style="color: #666;">No environments yet. Create one using the templates above!</p>
                     </div>
+                </div>
+            </div>
+
+            <!-- Monitoring Tools Section -->
+            <div class="monitoring-tools">
+                <h3>🔍 Monitoring & Analytics</h3>
+                <div class="tools-grid">
+                    <a href="http://localhost:5000" target="_blank" class="tool-link mlflow-link">
+                        <div class="tool-icon">📊</div>
+                        <div class="tool-name">MLflow</div>
+                        <div class="tool-description">Experiment tracking, model registry & deployment management</div>
+                    </a>
+                    
+                    <a href="http://localhost:9090" target="_blank" class="tool-link prometheus-link">
+                        <div class="tool-icon">📈</div>
+                        <div class="tool-name">Prometheus</div>
+                        <div class="tool-description">Metrics collection & monitoring system for infrastructure</div>
+                    </a>
+                    
+                    <a href="http://localhost:3000" target="_blank" class="tool-link grafana-link">
+                        <div class="tool-icon">📉</div>
+                        <div class="tool-name">Grafana</div>
+                        <div class="tool-description">Interactive dashboards & data visualization platform</div>
+                    </a>
                 </div>
             </div>
         </div>
