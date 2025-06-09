@@ -1075,6 +1075,9 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         elif "jupyter" in env_type:
             environment["SERVICE_TYPE"] = "jupyter"
         
+        # Set MLflow tracking URI to use the correct service name
+        environment["MLFLOW_TRACKING_URI"] = "http://mlflow:5000"
+        
         # Dynamic port allocation using ResourceManager
         if env_type == "vscode":
             host_port = resource_manager.allocate_port(8080)
@@ -1124,6 +1127,7 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
                 environment=environment,
                 volumes=volumes,
                 device_requests=device_requests,
+                network="ml-platform",  # Connect to the existing network
                 detach=True,
                 restart_policy={"Name": "unless-stopped"},
                 mem_limit=resource_limits["memory"],
