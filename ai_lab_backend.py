@@ -7,6 +7,10 @@ import os
 from datetime import datetime
 import psutil
 import GPUtil
+import shutil
+import zipfile
+from werkzeug.utils import secure_filename
+from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)
@@ -246,11 +250,174 @@ ENVIRONMENT_TEMPLATES = {
     }
 }
 
+# Data management configuration
+DATA_BASE_PATH = Path("ai-lab-data")
+USER_DATA_PATH = DATA_BASE_PATH / "users"
+SHARED_DATA_PATH = DATA_BASE_PATH / "shared"
+ADMIN_DATA_PATH = DATA_BASE_PATH / "admin"
+
+# Ensure data directories exist
+for path in [USER_DATA_PATH, SHARED_DATA_PATH, ADMIN_DATA_PATH]:
+    path.mkdir(parents=True, exist_ok=True)
+
+# Configure file uploads after DATA_BASE_PATH is defined
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+app.config['UPLOAD_FOLDER'] = str(DATA_BASE_PATH)
+
+class DataManager:
+    def __init__(self, base_path=DATA_BASE_PATH):
+        self.base_path = Path(base_path)
+        self.user_data_path = self.base_path / "users"
+        self.shared_data_path = self.base_path / "shared"
+        self.admin_data_path = self.base_path / "admin"
+        
+        # Ensure all base directories exist
+        for path in [self.user_data_path, self.shared_data_path, self.admin_data_path]:
+            path.mkdir(parents=True, exist_ok=True)
+    
+    def get_user_data_path(self, user_id):
+        """Get the data directory path for a specific user"""
+        user_path = self.user_data_path / self._sanitize_user_id(user_id)
+        user_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create standard subdirectories
+        for subdir in ["datasets", "notebooks", "models", "workspace"]:
+            (user_path / subdir).mkdir(parents=True, exist_ok=True)
+        
+        return user_path
+    
+    def _sanitize_user_id(self, user_id):
+        """Sanitize user ID to be filesystem safe"""
+        return secure_filename(user_id.replace("@", "_at_").replace(".", "_"))
+    
+    def get_user_storage_info(self, user_id):
+        """Get storage usage information for a user"""
+        user_path = self.get_user_data_path(user_id)
+        
+        def get_dir_size(path):
+            if not path.exists():
+                return 0
+            return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+        
+        storage_info = {
+            "total_bytes": get_dir_size(user_path),
+            "datasets_bytes": get_dir_size(user_path / "datasets"),
+            "notebooks_bytes": get_dir_size(user_path / "notebooks"),
+            "models_bytes": get_dir_size(user_path / "models"),
+            "workspace_bytes": get_dir_size(user_path / "workspace"),
+        }
+        
+        # Convert to human readable - create new dict to avoid modifying during iteration
+        human_readable = {}
+        for key, value in storage_info.items():
+            human_readable[key.replace('_bytes', '_human')] = self._bytes_to_human(value)
+        
+        # Add human readable values to storage_info
+        storage_info.update(human_readable)
+        
+        return storage_info
+    
+    def _bytes_to_human(self, bytes_count):
+        """Convert bytes to human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_count < 1024.0:
+                return f"{bytes_count:.1f} {unit}"
+            bytes_count /= 1024.0
+        return f"{bytes_count:.1f} PB"
+    
+    def list_user_files(self, user_id, category="all"):
+        """List files in user's data directory"""
+        user_path = self.get_user_data_path(user_id)
+        
+        if category == "all":
+            search_paths = [user_path / subdir for subdir in ["datasets", "notebooks", "models", "workspace"]]
+        else:
+            search_paths = [user_path / category]
+        
+        files = []
+        for search_path in search_paths:
+            if search_path.exists():
+                for file_path in search_path.rglob('*'):
+                    if file_path.is_file():
+                        relative_path = file_path.relative_to(user_path)
+                        files.append({
+                            "name": file_path.name,
+                            "path": str(relative_path),
+                            "category": str(relative_path.parts[0]),
+                            "size_bytes": file_path.stat().st_size,
+                            "size_human": self._bytes_to_human(file_path.stat().st_size),
+                            "modified": file_path.stat().st_mtime,
+                        })
+        
+        return sorted(files, key=lambda x: x['modified'], reverse=True)
+    
+    def list_shared_datasets(self):
+        """List available shared datasets"""
+        shared_datasets_path = self.shared_data_path / "datasets"
+        datasets = []
+        
+        if shared_datasets_path.exists():
+            for dataset_path in shared_datasets_path.iterdir():
+                if dataset_path.is_dir():
+                    def get_dir_size(path):
+                        return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+                    
+                    size_bytes = get_dir_size(dataset_path)
+                    datasets.append({
+                        "name": dataset_path.name,
+                        "path": str(dataset_path.relative_to(self.shared_data_path)),
+                        "size_bytes": size_bytes,
+                        "size_human": self._bytes_to_human(size_bytes),
+                        "file_count": len(list(dataset_path.rglob('*'))),
+                    })
+        
+        return sorted(datasets, key=lambda x: x['name'])
+    
+    def copy_shared_dataset_to_user(self, dataset_name, user_id):
+        """Copy a shared dataset to user's datasets directory"""
+        shared_dataset_path = self.shared_data_path / "datasets" / dataset_name
+        user_dataset_path = self.get_user_data_path(user_id) / "datasets" / dataset_name
+        
+        if not shared_dataset_path.exists():
+            raise FileNotFoundError(f"Shared dataset '{dataset_name}' not found")
+        
+        if user_dataset_path.exists():
+            raise FileExistsError(f"Dataset '{dataset_name}' already exists in user's directory")
+        
+        shutil.copytree(shared_dataset_path, user_dataset_path)
+        return True
+    
+    def create_user_backup(self, user_id):
+        """Create a backup of user's data"""
+        user_path = self.get_user_data_path(user_id)
+        backup_path = self.admin_data_path / "backups"
+        backup_path.mkdir(parents=True, exist_ok=True)
+        
+        backup_filename = f"backup_{self._sanitize_user_id(user_id)}_{int(datetime.now().timestamp())}.zip"
+        backup_file_path = backup_path / backup_filename
+        
+        with zipfile.ZipFile(backup_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in user_path.rglob('*'):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(user_path)
+                    zipf.write(file_path, arcname)
+        
+        return {
+            "backup_filename": backup_filename,
+            "backup_path": str(backup_file_path),
+            "size_bytes": backup_file_path.stat().st_size,
+            "size_human": self._bytes_to_human(backup_file_path.stat().st_size),
+        }
+
+# Initialize data manager
+data_manager = DataManager()
+
 class ResourceManager:
     def __init__(self, docker_client):
         self.docker_client = docker_client
         self.user_environments = {}  # Track environments per user
         self.environment_start_times = {}  # Track environment runtime
+        self.allocated_ports = set()  # Track allocated ports to prevent conflicts
     
     def check_user_quota(self, user_id, quota_type="default"):
         """Check if user has reached their quota limits"""
@@ -292,6 +459,50 @@ class ResourceManager:
             self.user_environments[user_id].remove(container_id)
         if container_id in self.environment_start_times:
             del self.environment_start_times[container_id]
+    
+    def allocate_port(self, start_port=8888, max_attempts=100):
+        """Allocate an available port and track it"""
+        import socket
+        
+        # Get all ports currently used by Docker containers
+        used_docker_ports = set()
+        if self.docker_client:
+            try:
+                containers = self.docker_client.containers.list()
+                for container in containers:
+                    ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+                    for container_port, host_bindings in ports.items():
+                        if host_bindings:
+                            for binding in host_bindings:
+                                if binding.get('HostPort'):
+                                    used_docker_ports.add(int(binding['HostPort']))
+            except Exception:
+                pass  # Continue even if we can't get Docker port info
+        
+        for port in range(start_port, start_port + max_attempts):
+            # Skip if we've already allocated this port
+            if port in self.allocated_ports:
+                continue
+            
+            # Skip if Docker is already using this port
+            if port in used_docker_ports:
+                continue
+                
+            # Check if port is actually available
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('localhost', port))
+                    # Port is available, allocate it
+                    self.allocated_ports.add(port)
+                    return port
+            except OSError:
+                continue
+        
+        raise Exception(f"No available port found in range {start_port}-{start_port + max_attempts}")
+    
+    def release_port(self, port):
+        """Release a port from tracking"""
+        self.allocated_ports.discard(port)
     
     def check_runtime_limits(self, container_id, quota_type="default"):
         """Check if environment has exceeded runtime limit"""
@@ -560,28 +771,44 @@ def get_environments():
                     if not any(x in container.name for x in ['mlflow', 'torchserve']):
                         continue
                 
-                # Map container names to environment types
+                # Map container names to environment types and get dynamic ports
                 env_type = "unknown"
                 access_url = "N/A"
                 
+                # Get actual port mappings from container
+                ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+                host_port = None
+                
                 if "jupyter" in container.name or "pytorch" in container.name or "tensorflow" in container.name:
                     env_type = "jupyter"
-                    # Use the configured port from ENVIRONMENT_CONFIGS
-                    if "pytorch" in container.name:
-                        access_url = "http://localhost:8888/lab"
-                    elif "tensorflow" in container.name:
-                        access_url = "http://localhost:8889/lab"
+                    # Look for port 8888 mapping
+                    if '8888/tcp' in ports and ports['8888/tcp']:
+                        host_port = ports['8888/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}/lab"
                     else:
-                        access_url = "http://localhost:8888/lab"
+                        access_url = "http://localhost:8888/lab"  # Fallback
                 elif "vscode" in container.name:
                     env_type = "vscode"
-                    access_url = "http://localhost:8080"
+                    # Look for port 8080 mapping
+                    if '8080/tcp' in ports and ports['8080/tcp']:
+                        host_port = ports['8080/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:8080"  # Fallback
                 elif "mlflow" in container.name:
                     env_type = "mlflow"
-                    access_url = "http://localhost:5000"
+                    if '5000/tcp' in ports and ports['5000/tcp']:
+                        host_port = ports['5000/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:5000"  # Fallback
                 elif "torchserve" in container.name:
                     env_type = "model-serving"
-                    access_url = "http://localhost:8081"
+                    if '8080/tcp' in ports and ports['8080/tcp']:
+                        host_port = ports['8080/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:8081"  # Fallback
                 
                 environments.append({
                     "id": container.name,
@@ -615,28 +842,44 @@ def get_user_environments(user_id):
         for container in containers:
             # Only include containers that belong to this user
             if container.id in user_container_ids or container.name in user_container_ids:
-                # Map container names to environment types
+                # Map container names to environment types and get dynamic ports
                 env_type = "unknown"
                 access_url = "N/A"
                 
+                # Get actual port mappings from container
+                ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+                host_port = None
+                
                 if "jupyter" in container.name or "pytorch" in container.name or "tensorflow" in container.name:
                     env_type = "jupyter"
-                    # Use the configured port from ENVIRONMENT_CONFIGS
-                    if "pytorch" in container.name:
-                        access_url = "http://localhost:8888/lab"
-                    elif "tensorflow" in container.name:
-                        access_url = "http://localhost:8889/lab"
+                    # Look for port 8888 mapping
+                    if '8888/tcp' in ports and ports['8888/tcp']:
+                        host_port = ports['8888/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}/lab"
                     else:
-                        access_url = "http://localhost:8888/lab"
+                        access_url = "http://localhost:8888/lab"  # Fallback
                 elif "vscode" in container.name:
                     env_type = "vscode"
-                    access_url = "http://localhost:8080"
+                    # Look for port 8080 mapping
+                    if '8080/tcp' in ports and ports['8080/tcp']:
+                        host_port = ports['8080/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:8080"  # Fallback
                 elif "mlflow" in container.name:
                     env_type = "mlflow"
-                    access_url = "http://localhost:5000"
+                    if '5000/tcp' in ports and ports['5000/tcp']:
+                        host_port = ports['5000/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:5000"  # Fallback
                 elif "torchserve" in container.name:
                     env_type = "model-serving"
-                    access_url = "http://localhost:8081"
+                    if '8080/tcp' in ports and ports['8080/tcp']:
+                        host_port = ports['8080/tcp'][0]['HostPort']
+                        access_url = f"http://localhost:{host_port}"
+                    else:
+                        access_url = "http://localhost:8081"  # Fallback
                 
                 environments.append({
                     "id": container.name,
@@ -735,11 +978,27 @@ def delete_environment(env_id):
             # Try to remove without force flag as backup
             container.remove()
         
+        # Get the port to release before tracking cleanup
+        port_to_release = None
+        try:
+            # Get port info from container before deletion
+            ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+            if '8888/tcp' in ports and ports['8888/tcp']:
+                port_to_release = int(ports['8888/tcp'][0]['HostPort'])
+            elif '8080/tcp' in ports and ports['8080/tcp']:
+                port_to_release = int(ports['8080/tcp'][0]['HostPort'])
+        except Exception:
+            pass  # Continue even if we can't get port info
+        
         # Update resource tracking
         for user_id, environments in resource_manager.user_environments.items():
             if env_id in environments:
                 resource_manager.untrack_environment(user_id, env_id)
                 break
+        
+        # Release the port if we found one
+        if port_to_release:
+            resource_manager.release_port(port_to_release)
         
         return jsonify({"message": f"Environment {env_id} deleted successfully"})
     except docker.errors.NotFound:
@@ -762,31 +1021,39 @@ def restart_environment(env_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/environments/create', methods=['POST'])
-def create_environment():
-    """Create a new environment with enhanced resource management"""
-    data = request.json
-    env_type = data.get('type', 'pytorch-jupyter')
-    user_id = data.get('user_id', 'default')
-    user_quota = data.get('quota', 'default')
+def find_available_port(start_port=8888, max_attempts=100):
+    """Find an available port starting from start_port"""
+    import socket
     
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('localhost', port))
+                return port
+        except OSError:
+            continue
+    
+    raise Exception(f"No available port found in range {start_port}-{start_port + max_attempts}")
+
+def _create_environment_core(env_type, user_id, user_quota='default'):
+    """Core environment creation logic - returns (result_dict, status_code)"""
     if env_type not in ENVIRONMENT_CONFIGS:
-        return jsonify({"error": "Invalid environment type"}), 400
+        return {"error": "Invalid environment type"}, 400
     
     # Check user quota
     quota_ok, quota_message = resource_manager.check_user_quota(user_id, user_quota)
     if not quota_ok:
-        return jsonify({"error": quota_message}), 400
+        return {"error": quota_message}, 400
     
     # Check resource availability
     available, message = check_resource_availability(env_type, user_quota)
     if not available:
-        return jsonify({"error": message}), 400
+        return {"error": message}, 400
     
     config = ENVIRONMENT_CONFIGS[env_type]
     
     if not docker_client:
-        return jsonify({"error": "Docker not available"}), 500
+        return {"error": "Docker not available"}, 500
     
     try:
         # Generate unique name
@@ -807,34 +1074,87 @@ def create_environment():
         elif "jupyter" in env_type:
             environment["SERVICE_TYPE"] = "jupyter"
         
-        # Create and start container with resource limits
-        container = docker_client.containers.run(
-            config["image"],
-            name=container_name,
-            ports=config["ports"],
-            environment=environment,
-            detach=True,
-            restart_policy={"Name": "unless-stopped"},
-            mem_limit=resource_limits["memory"],
-            cpu_count=resource_limits["cpu_count"]
-        )
+        # Dynamic port allocation using ResourceManager
+        if env_type == "vscode":
+            host_port = resource_manager.allocate_port(8080)
+            container_port = "8080"
+        elif "jupyter" in env_type:
+            host_port = resource_manager.allocate_port(8888)
+            container_port = "8888"
+        else:
+            # Use original port configuration for other types
+            original_ports = config["ports"]
+            host_port = int(list(original_ports.keys())[0])
+            container_port = list(original_ports.values())[0]
         
-        # Track the new environment
-        resource_manager.track_environment(user_id, container.name)
+        # Create port mapping
+        ports = {container_port: host_port}
         
-        return jsonify({
-            "message": f"Environment {container_name} created successfully",
-            "container_id": container.id,
-            "access_url": config["access_url"],
-            "resource_limits": {
-                "memory": resource_limits["memory"],
-                "cpu_count": resource_limits["cpu_count"]
-            },
-            "user_quota": user_quota
-        })
+        # Generate dynamic access URL
+        if "jupyter" in env_type:
+            access_url = f"http://localhost:{host_port}/lab"
+        elif env_type == "vscode":
+            access_url = f"http://localhost:{host_port}"
+        else:
+            access_url = f"http://localhost:{host_port}"
+        
+        # Set up user data volumes with absolute paths
+        user_data_path = data_manager.get_user_data_path(user_id).resolve()
+        shared_data_path = data_manager.shared_data_path.resolve()
+        
+        volumes = {
+            str(user_data_path): {'bind': '/home/jovyan/data', 'mode': 'rw'},
+            str(shared_data_path): {'bind': '/home/jovyan/shared', 'mode': 'ro'}
+        }
+        
+        try:
+            # Create and start container with resource limits and data volumes
+            container = docker_client.containers.run(
+                config["image"],
+                name=container_name,
+                ports=ports,
+                environment=environment,
+                volumes=volumes,
+                detach=True,
+                restart_policy={"Name": "unless-stopped"},
+                mem_limit=resource_limits["memory"],
+                cpu_count=resource_limits["cpu_count"]
+            )
+            
+            # Track the new environment
+            resource_manager.track_environment(user_id, container.name)
+            
+            return {
+                "message": f"Environment {container_name} created successfully",
+                "container_id": container.id,
+                "container_name": container.name,
+                "access_url": access_url,
+                "host_port": host_port,
+                "resource_limits": {
+                    "memory": resource_limits["memory"],
+                    "cpu_count": resource_limits["cpu_count"]
+                },
+                "user_quota": user_quota
+            }, 200
+            
+        except Exception as container_error:
+            # Release the allocated port if container creation failed
+            resource_manager.release_port(host_port)
+            raise container_error
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
+
+@app.route('/api/environments/create', methods=['POST'])
+def create_environment():
+    """Create a new environment with enhanced resource management"""
+    data = request.json
+    env_type = data.get('type', 'pytorch-jupyter')
+    user_id = data.get('user_id', 'default')
+    user_quota = data.get('quota', 'default')
+    
+    result, status_code = _create_environment_core(env_type, user_id, user_quota)
+    return jsonify(result), status_code
 
 @app.route('/api/resources/usage')
 def get_resource_usage():
@@ -871,24 +1191,53 @@ def get_environment_access(env_id):
     try:
         container = docker_client.containers.get(env_id)
         
-        # Determine access URL based on container type
-        access_url = "http://localhost:8888/lab"  # Default
+        # Get the actual port mappings from the container
+        ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+        
+        # Find the host port for the container
+        host_port = None
+        container_type = "unknown"
         
         if "vscode" in container.name:
-            access_url = "http://localhost:8080"
-        elif "pytorch" in container.name:
-            access_url = "http://localhost:8888/lab"
-        elif "tensorflow" in container.name:
-            access_url = "http://localhost:8889/lab"
-        elif "jupyter" in container.name:
-            access_url = "http://localhost:8888/lab"
+            container_type = "vscode"
+            # Look for port 8080 mapping
+            if '8080/tcp' in ports and ports['8080/tcp']:
+                host_port = ports['8080/tcp'][0]['HostPort']
+        elif any(x in container.name for x in ["pytorch", "tensorflow", "jupyter"]):
+            container_type = "jupyter"
+            # Look for port 8888 mapping
+            if '8888/tcp' in ports and ports['8888/tcp']:
+                host_port = ports['8888/tcp'][0]['HostPort']
         elif "mlflow" in container.name:
-            access_url = "http://localhost:5000"
+            container_type = "mlflow"
+            if '5000/tcp' in ports and ports['5000/tcp']:
+                host_port = ports['5000/tcp'][0]['HostPort']
+        elif "torchserve" in container.name:
+            container_type = "model-serving"
+            if '8080/tcp' in ports and ports['8080/tcp']:
+                host_port = ports['8080/tcp'][0]['HostPort']
+        
+        # Generate access URL based on actual port
+        if host_port:
+            if container_type == "jupyter":
+                access_url = f"http://localhost:{host_port}/lab"
+            elif container_type == "vscode":
+                access_url = f"http://localhost:{host_port}"
+            elif container_type == "mlflow":
+                access_url = f"http://localhost:{host_port}"
+            elif container_type == "model-serving":
+                access_url = f"http://localhost:{host_port}"
+            else:
+                access_url = f"http://localhost:{host_port}"
+        else:
+            access_url = "N/A - Port not available"
         
         return jsonify({
             "access_url": access_url,
+            "host_port": host_port,
             "status": container.status,
-            "type": "vscode" if "vscode" in container.name else "jupyter"
+            "type": container_type,
+            "ports": ports
         })
         
     except docker.errors.NotFound:
@@ -970,19 +1319,20 @@ def create_from_template():
     template = ENVIRONMENT_TEMPLATES[template_name]
     base_type = template['base_type']
     
-    # Create base environment
-    data['type'] = base_type
-    response_data = create_environment()
+    # Create base environment using core logic
+    user_id = data.get('user_id', 'default')
+    user_quota = data.get('quota', 'default')
     
-    # Handle Flask Response object
-    if hasattr(response_data, 'status_code') and response_data.status_code != 200:
-        return response_data
+    result, status_code = _create_environment_core(base_type, user_id, user_quota)
     
-    response_json = response_data.get_json()
+    if status_code != 200:
+        return jsonify(result), status_code
     
     # Install additional packages
     try:
-        container_id = response_json.get('container_id')
+        container_id = result.get('container_id')
+        container_name = result.get('container_name')
+        
         if not container_id:
             return jsonify({"error": "Failed to get container ID from base environment creation"}), 500
         
@@ -995,8 +1345,10 @@ def create_from_template():
         return jsonify({
             "message": f"Environment created from template {template_name}",
             "container_id": container_id,
+            "container_name": container_name,
             "template": template_name,
-            "packages": template['packages']
+            "packages": template['packages'],
+            "access_url": result.get('access_url')
         })
         
     except Exception as e:
@@ -1049,6 +1401,11 @@ def serve_frontend():
     """Serve the HTML frontend"""
     return send_file('ai_lab_user_platform.html')
 
+@app.route('/admin')
+def serve_admin_portal():
+    """Serve the admin portal"""
+    return send_file('ai_lab_admin_portal.html')
+
 @app.route('/api/users/<user_id>/resources', methods=['GET'])
 def get_user_resources(user_id):
     """Get resource usage for a specific user"""
@@ -1077,6 +1434,17 @@ def cleanup_environments():
                 any(x in container.name for x in ['jupyter', 'vscode', 'pytorch', 'tensorflow'])):
                 
                 try:
+                    # Get port info before removing container
+                    port_to_release = None
+                    try:
+                        ports = container.attrs.get('NetworkSettings', {}).get('Ports', {})
+                        if '8888/tcp' in ports and ports['8888/tcp']:
+                            port_to_release = int(ports['8888/tcp'][0]['HostPort'])
+                        elif '8080/tcp' in ports and ports['8080/tcp']:
+                            port_to_release = int(ports['8080/tcp'][0]['HostPort'])
+                    except Exception:
+                        pass
+                    
                     container.remove(force=True)
                     cleaned_up.append(container.name)
                     
@@ -1085,6 +1453,10 @@ def cleanup_environments():
                         if container.name in environments:
                             resource_manager.untrack_environment(user_id, container.name)
                             break
+                    
+                    # Release the port if we found one
+                    if port_to_release:
+                        resource_manager.release_port(port_to_release)
                             
                 except Exception as e:
                     errors.append(f"Failed to remove {container.name}: {str(e)}")
@@ -1199,10 +1571,198 @@ def register_environment_for_user(env_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/users/<user_id>/data', methods=['GET'])
+def get_user_data(user_id):
+    """Get user's data information and file listing"""
+    try:
+        storage_info = data_manager.get_user_storage_info(user_id)
+        
+        category = request.args.get('category', 'all')
+        files = data_manager.list_user_files(user_id, category)
+        
+        return jsonify({
+            "user_id": user_id,
+            "storage_info": storage_info,
+            "files": files,
+            "category": category
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/users/<user_id>/data/upload', methods=['POST'])
+def upload_user_data(user_id):
+    """Upload data to user's directory"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
+    file = request.files['file']
+    category = request.form.get('category', 'workspace')
+    
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    
+    try:
+        user_path = data_manager.get_user_data_path(user_id)
+        category_path = user_path / category
+        category_path.mkdir(parents=True, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        file_path = category_path / filename
+        
+        file.save(str(file_path))
+        
+        return jsonify({
+            "message": f"File uploaded successfully to {category}",
+            "filename": filename,
+            "category": category,
+            "size_bytes": file_path.stat().st_size,
+            "size_human": data_manager._bytes_to_human(file_path.stat().st_size)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/shared/datasets', methods=['GET'])
+def get_shared_datasets():
+    """Get list of available shared datasets"""
+    try:
+        datasets = data_manager.list_shared_datasets()
+        return jsonify({
+            "datasets": datasets,
+            "count": len(datasets)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/users/<user_id>/datasets/copy/<dataset_name>', methods=['POST'])
+def copy_shared_dataset(user_id, dataset_name):
+    """Copy a shared dataset to user's datasets directory"""
+    try:
+        data_manager.copy_shared_dataset_to_user(dataset_name, user_id)
+        
+        return jsonify({
+            "message": f"Dataset '{dataset_name}' copied to user {user_id}",
+            "dataset_name": dataset_name,
+            "user_id": user_id
+        })
+        
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except FileExistsError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/users', methods=['GET'])
+def admin_get_users():
+    """Admin endpoint to get all users and their data"""
+    try:
+        users = []
+        if data_manager.user_data_path.exists():
+            for user_dir in data_manager.user_data_path.iterdir():
+                if user_dir.is_dir():
+                    # Convert back from sanitized format
+                    user_id = user_dir.name.replace("_at_", "@").replace("_", ".")
+                    
+                    storage_info = data_manager.get_user_storage_info(user_id)
+                    resource_usage = resource_manager.get_user_resource_usage(user_id)
+                    
+                    users.append({
+                        "user_id": user_id,
+                        "sanitized_id": user_dir.name,
+                        "storage_info": storage_info,
+                        "resource_usage": resource_usage,
+                        "environments_count": len(resource_manager.user_environments.get(user_id, []))
+                    })
+        
+        return jsonify({
+            "users": users,
+            "total_users": len(users)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/users/<user_id>/backup', methods=['POST'])
+def admin_create_user_backup(user_id):
+    """Admin endpoint to create backup of user's data"""
+    try:
+        backup_info = data_manager.create_user_backup(user_id)
+        
+        return jsonify({
+            "message": f"Backup created for user {user_id}",
+            "user_id": user_id,
+            "backup_info": backup_info
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/shared/datasets/upload', methods=['POST'])
+def admin_upload_shared_dataset():
+    """Admin endpoint to upload shared datasets"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
+    file = request.files['file']
+    dataset_name = request.form.get('dataset_name')
+    
+    if not dataset_name:
+        return jsonify({"error": "Dataset name is required"}), 400
+    
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    
+    try:
+        shared_datasets_path = data_manager.shared_data_path / "datasets"
+        dataset_path = shared_datasets_path / secure_filename(dataset_name)
+        dataset_path.mkdir(parents=True, exist_ok=True)
+        
+        filename = secure_filename(file.filename)
+        file_path = dataset_path / filename
+        
+        file.save(str(file_path))
+        
+        return jsonify({
+            "message": f"Shared dataset '{dataset_name}' uploaded successfully",
+            "dataset_name": dataset_name,
+            "filename": filename,
+            "size_bytes": file_path.stat().st_size,
+            "size_human": data_manager._bytes_to_human(file_path.stat().st_size)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/users/<user_id>/data/delete', methods=['DELETE'])
+def admin_delete_user_data(user_id):
+    """Admin endpoint to delete user's data"""
+    try:
+        user_path = data_manager.get_user_data_path(user_id)
+        
+        if user_path.exists():
+            shutil.rmtree(user_path)
+            
+            return jsonify({
+                "message": f"All data deleted for user {user_id}",
+                "user_id": user_id
+            })
+        else:
+            return jsonify({
+                "message": f"No data found for user {user_id}",
+                "user_id": user_id
+            })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
-    print("🚀 Starting AI Lab Backend API")
-    print("🌐 Frontend: http://localhost:5555")
-    print("🔧 API: http://localhost:5555/api/health")
-    print("📋 Environments: http://localhost:5555/api/environments")
+    print("Starting AI Lab Backend API")
+    print("Frontend: http://localhost:5555")
+    print("Admin Portal: http://localhost:5555/admin") 
+    print("API Health: http://localhost:5555/api/health")
+    print("Environments: http://localhost:5555/api/environments")
     
     app.run(host='0.0.0.0', port=5555, debug=True) 
