@@ -421,7 +421,8 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:5555';
+        // API configuration
+        const API_BASE = '';  // Use relative paths since we're serving from the same domain
         let users = [];
         let environments = [];
 
@@ -541,23 +542,47 @@
         async function loadAllEnvironments() {
             try {
                 const response = await fetch(`${API_BASE}/api/environments`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.error) {
+                    console.error('API returned error:', data.error);
                     showAlert('Error loading environments: ' + data.error, 'error');
+                    environments = []; // Ensure it's always an array
+                    renderEnvironmentsTable();
                     return;
                 }
                 
-                environments = data.environments;
+                // Ensure environments is always an array
+                environments = Array.isArray(data.environments) ? data.environments : [];
+                console.log('Loaded environments:', environments.length);
                 renderEnvironmentsTable();
                 
             } catch (error) {
                 console.error('Error loading environments:', error);
-                showAlert('Error loading environments', 'error');
+                showAlert('Error loading environments: ' + error.message, 'error');
+                environments = []; // Ensure it's always an array
+                renderEnvironmentsTable();
             }
         }
 
         function renderEnvironmentsTable() {
+            // Add safety check for environments array
+            if (!environments || !Array.isArray(environments)) {
+                console.warn('Environments data is not available or not an array:', environments);
+                document.getElementById('environmentsTable').innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #666;">
+                        <p>No environments data available</p>
+                        <button class="btn" onclick="loadAllEnvironments()">Reload</button>
+                    </div>
+                `;
+                return;
+            }
+            
             const tableHTML = `
                 <table class="data-table">
                     <thead>
@@ -570,16 +595,22 @@
                         </tr>
                     </thead>
                     <tbody>
-                        ${environments.map(env => `
+                        ${environments.length === 0 ? `
                             <tr>
-                                <td>${env.name}</td>
-                                <td>${env.type.toUpperCase()}</td>
+                                <td colspan="5" style="text-align: center; padding: 40px; color: #666;">
+                                    No environments found
+                                </td>
+                            </tr>
+                        ` : environments.map(env => `
+                            <tr>
+                                <td>${env.name || 'Unknown'}</td>
+                                <td>${env.type ? env.type.toUpperCase() : 'Unknown'}</td>
                                 <td>
                                     <span class="badge badge-${env.status === 'running' ? 'running' : env.status === 'paused' ? 'paused' : 'stopped'}">
-                                        ${env.status.charAt(0).toUpperCase() + env.status.slice(1)}
+                                        ${env.status ? env.status.charAt(0).toUpperCase() + env.status.slice(1) : 'Unknown'}
                                     </span>
                                 </td>
-                                <td>${new Date(env.created).toLocaleDateString()}</td>
+                                <td>${env.created ? new Date(env.created).toLocaleDateString() : 'Unknown'}</td>
                                 <td>
                                     ${env.status === 'running' ? `
                                         <button class="btn btn-warning" onclick="pauseEnvironment('${env.id}')">Pause</button>

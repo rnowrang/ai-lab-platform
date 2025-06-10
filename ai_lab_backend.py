@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, Response
 from flask_cors import CORS
 import docker
 import subprocess
@@ -11,6 +11,7 @@ import shutil
 import zipfile
 from werkzeug.utils import secure_filename
 from pathlib import Path
+import requests
 
 app = Flask(__name__)
 CORS(app)
@@ -859,7 +860,7 @@ def get_environments():
                     "type": env_type,
                     "access_url": access_url,
                     "created": container.attrs.get('Created', ''),
-                    "image": container.image.tags[0] if container.image.tags else 'unknown'
+                    "image": container.image.tags[0] if (container.image and container.image.tags and len(container.image.tags) > 0) else 'unknown'
                 })
         
         return jsonify({"environments": environments})
@@ -933,7 +934,7 @@ def get_user_environments(user_id):
                     "type": env_type,
                     "access_url": access_url,
                     "created": container.attrs.get('Created', ''),
-                    "image": container.image.tags[0] if container.image.tags else 'unknown',
+                    "image": container.image.tags[0] if (container.image and container.image.tags and len(container.image.tags) > 0) else 'unknown',
                     "owner": user_id
                 })
         
@@ -1183,15 +1184,21 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
                 "detach": True,
                 "restart_policy": {"Name": "unless-stopped"},
                 "mem_limit": resource_limits["memory"],
-                "cpu_count": resource_limits["cpu_count"]
+                "cpu_count": resource_limits["cpu_count"],
+                "cpuset_cpus": f"0-{quota['max_cpu_cores']-1}",  # Limit to specific CPU cores
+                "mem_swappiness": 0  # Disable swap to enforce memory limits
             }
             
-            # Enable IPC host mode for GPU environments to support multi-GPU training
+            # Limit GPU access based on quota
             if config.get("resource_requirements", {}).get("gpu_required"):
+                max_gpus = quota['max_gpus']
+                device_requests = [
+                    docker.types.DeviceRequest(count=max_gpus, capabilities=[['gpu']])
+                ]
+                container_args["device_requests"] = device_requests
                 container_args["ipc_mode"] = "host"
-                # Also set NCCL environment variables for better GPU communication
-                environment["NCCL_DEBUG"] = "INFO"
-                environment["NCCL_IB_DISABLE"] = "1"  # Disable InfiniBand if not available
+                # Set CUDA_VISIBLE_DEVICES to limit GPU access
+                environment["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(max_gpus))
             
             # Add command if specified in config
             if "command" in config:
@@ -1522,8 +1529,9 @@ def clone_environment(env_id):
         new_name = f"{source_container.name}-clone-{timestamp}"
         
         # Create new container
+        image_name = source_container.image.tags[0] if (source_container.image and source_container.image.tags and len(source_container.image.tags) > 0) else 'ubuntu:latest'
         new_container = docker_client.containers.create(
-            image=source_container.image.tags[0],
+            image=image_name,
             name=new_name,
             command=config['Cmd'],
             environment=config['Env'],
@@ -1555,6 +1563,45 @@ def serve_frontend():
 def serve_admin_portal():
     """Serve the admin portal"""
     return send_file('ai_lab_admin_portal.html')
+
+@app.route('/prometheus/')
+@app.route('/prometheus/<path:path>')
+def prometheus_proxy(path=''):
+    """Proxy requests to Prometheus container"""
+    try:
+        # Forward the request to the internal Prometheus service
+        prometheus_url = f"http://ai-lab-prometheus:9090/{path}"
+        
+        # Get query parameters
+        params = dict(request.args)
+        
+        # Forward the request
+        if request.method == 'GET':
+            resp = requests.get(prometheus_url, params=params, 
+                              headers={k: v for k, v in request.headers if k.lower() != 'host'},
+                              timeout=30)
+        else:
+            resp = requests.request(request.method, prometheus_url, 
+                                  data=request.get_data(),
+                                  params=params,
+                                  headers={k: v for k, v in request.headers if k.lower() != 'host'},
+                                  timeout=30)
+        
+        # Create response with proper headers
+        response = Response(resp.content, 
+                          status=resp.status_code,
+                          headers=dict(resp.headers))
+        
+        # Remove problematic headers
+        response.headers.pop('Transfer-Encoding', None)
+        response.headers.pop('Connection', None)
+        
+        return response
+        
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Prometheus service unavailable: {str(e)}"}), 503
+    except Exception as e:
+        return jsonify({"error": f"Proxy error: {str(e)}"}), 500
 
 @app.route('/api/users/<user_id>/resources', methods=['GET'])
 def get_user_resources(user_id):

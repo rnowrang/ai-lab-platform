@@ -776,7 +776,7 @@
                         <div class="tool-description">Experiment tracking, model registry & deployment management</div>
                     </a>
                     
-                    <a href="/prometheus/" target="_blank" class="tool-link prometheus-link">
+                    <a href="/prometheus/query" target="_blank" class="tool-link prometheus-link">
                         <div class="tool-icon">📈</div>
                         <div class="tool-name">Prometheus</div>
                         <div class="tool-description">Metrics collection & monitoring system for infrastructure</div>
@@ -812,40 +812,17 @@
             </div>
             
             <div class="form-group">
-                <label>Quota Tier</label>
-                <select id="quotaTier">
-                    <option value="default">Default (1 GPU, 8GB RAM, 2 CPU cores)</option>
-                    <option value="premium">Premium (2 GPUs, 16GB RAM, 4 CPU cores)</option>
-                    <option value="enterprise">Enterprise (4 GPUs, 32GB RAM, 8 CPU cores)</option>
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label>GPU Count</label>
-                <div class="gpu-selector">
-                    <div class="gpu-option selected" onclick="selectGPU(1)">1 GPU</div>
-                    <div class="gpu-option" onclick="selectGPU(2)">2 GPUs</div>
-                    <div class="gpu-option" onclick="selectGPU(3)">3 GPUs</div>
-                    <div class="gpu-option" onclick="selectGPU(4)">4 GPUs</div>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label>GPU Type</label>
-                <select id="gpuType">
-                    <option value="rtx-3090">RTX 3090 (24GB VRAM)</option>
-                    <option value="rtx-2080-ti">RTX 2080 Ti (11GB VRAM)</option>
-                </select>
-            </div>
-            
-            <div class="resource-grid">
-                <div>
-                    <label>CPU Cores: <span id="cpuValue">4</span></label>
-                    <input type="range" id="cpuSlider" min="1" max="16" value="4" oninput="updateSliderValue('cpu', this.value)">
-                </div>
-                <div>
-                    <label>Memory: <span id="memoryValue">16</span>GB</label>
-                    <input type="range" id="memorySlider" min="4" max="64" step="4" value="16" oninput="updateSliderValue('memory', this.value)">
+                <label>Resource Allocation</label>
+                <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 15px; margin: 10px 0;">
+                    <p style="color: #f59e0b; margin: 0; font-size: 14px;">
+                        <strong>⚠️ Note:</strong> All environments currently receive the same resources:
+                    </p>
+                    <p style="color: #d1d5db; margin: 5px 0 0 0; font-size: 14px;">
+                        • 4 GPUs (access to all available GPUs)<br>
+                        • 16GB RAM (Docker enforced limit)<br>
+                        • 32 CPU cores (via affinity)<br>
+                        • Premium tier equivalent
+                    </p>
                 </div>
             </div>
             
@@ -978,8 +955,6 @@
                 Object.entries(data.templates).forEach(([templateName, template]) => {
                     const icon = templateIcons[templateName] || '💻';
                     const baseType = template.base_type;
-                    const resourceInfo = baseType.includes('multi-gpu') ? '4 GPU • 32GB RAM' : 
-                                       baseType.includes('vscode') ? '1 GPU • 8GB RAM' : '1 GPU • 16GB RAM';
                     
                     // Get tier information
                     const minimumTier = template.minimum_tier || 'default';
@@ -987,11 +962,14 @@
                                          minimumTier === 'premium' ? '#f59e0b' : '#10b981';
                     const tierLabel = minimumTier.charAt(0).toUpperCase() + minimumTier.slice(1);
                     
-                    // Get actual resource requirements if available
-                    let resourceDisplay = resourceInfo;
-                    if (template.resource_requirements) {
-                        const req = template.resource_requirements;
-                        resourceDisplay = `${req.gpus} GPU${req.gpus > 1 ? 's' : ''} • ${req.memory_gb}GB RAM • ${req.cpu_cores} CPU${req.cpu_cores > 1 ? 's' : ''}`;
+                    // Get actual resource allocation based on tier (matching RESOURCE_QUOTAS)
+                    let resourceDisplay;
+                    if (minimumTier === 'enterprise') {
+                        resourceDisplay = '4 GPUs • 32GB RAM • 8 CPUs';
+                    } else if (minimumTier === 'premium') {
+                        resourceDisplay = '2 GPUs • 16GB RAM • 4 CPUs';
+                    } else {
+                        resourceDisplay = '1 GPU • 8GB RAM • 2 CPUs';
                     }
                     
                     container.innerHTML += `
@@ -1118,7 +1096,6 @@
         async function createEnvironment() {
             const envName = document.getElementById('envName').value;
             const envType = document.getElementById('envType').value;
-            const quotaTier = document.getElementById('quotaTier').value;
             
             if (!envName) {
                 showAlert('Please enter an environment name', 'error');
@@ -1128,7 +1105,7 @@
             try {
                 showAlert(`Creating custom environment "${envName}"...`, 'success');
                 
-                // Use the basic environment creation endpoint
+                // Use the basic environment creation endpoint with default quota
                 const response = await fetch(`${API_BASE}/api/environments/create`, {
                     method: 'POST',
                     headers: {
@@ -1137,7 +1114,7 @@
                     body: JSON.stringify({
                         type: envType === 'vscode' ? 'vscode' : 'pytorch-jupyter',
                         user_id: currentUser.email,
-                        quota: quotaTier
+                        quota: 'premium' // Use premium since that's what actually gets allocated
                     })
                 });
                 
@@ -1245,16 +1222,21 @@
                     // Extract container ID from env.id if it's a full container name
                     const displayName = env.name.replace('ai-lab-', '').replace(/\-\d+$/, '');
                     const envTypeDisplay = env.type.toUpperCase();
-                    const imageDisplay = env.image.includes('jupyter') ? 'JupyterLab' : 
+                    const imageDisplay = env.image ? (env.image.includes('jupyter') ? 'JupyterLab' : 
                                        env.image.includes('vscode') ? 'VS Code' : 
-                                       env.type.toUpperCase();
+                                       env.type.toUpperCase()) : env.type.toUpperCase();
+                    
+                    // Based on test script findings: All environments get access to all 4 GPUs
+                    // Memory allocation varies: 16GB for premium tier (as detected by test script)
+                    // CPU cores: 32 via affinity
+                    const configInfo = '4 GPUs • 16GB RAM • 32 CPUs • Premium Tier';
                     
                     container.innerHTML += `
                         <div class="environment-item">
                             <div class="env-info">
                                 <h4>${displayName}</h4>
-                                <p>${imageDisplay} • ${envTypeDisplay} • Created: ${new Date(env.created).toLocaleDateString()}</p>
-                                <small style="color: #666;">Container: ${env.id.substring(0, 12)}</small>
+                                <p>${imageDisplay} • ${envTypeDisplay} • Created: ${new Date(env.created).toLocaleString()}</p>
+                                <small style="color: #666;">Container: ${env.id.substring(0, 12)} • ${env.type === 'jupyter' ? 'JupyterLab' : env.type === 'vscode' ? 'VS Code' : env.type} • ${configInfo}</small>
                             </div>
                             <div>
                                 <span class="env-status ${statusClass}">${statusText}</span>

@@ -1,0 +1,77 @@
+FROM python:3.9-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    gcc \
+    g++ \
+    make \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user and add to docker group
+RUN useradd -m -u 1000 appuser && \
+    groupadd -g 999 docker && \
+    usermod -aG docker appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install production dependencies
+RUN pip install --no-cache-dir \
+    gunicorn \
+    gevent \
+    psycopg2-binary \
+    redis \
+    celery \
+    flower
+
+# Copy application code
+COPY ai_lab_backend.py .
+COPY ai_lab_user_platform.html ./templates/
+COPY ai_lab_admin_portal.html ./templates/
+
+# Create necessary directories
+RUN mkdir -p /app/ai-lab-data /app/gpu_allocations /app/logs && \
+    chown -R appuser:appuser /app
+
+# Create a startup script to fix Docker socket permissions
+RUN echo '#!/bin/sh\n\
+if [ -e /var/run/docker.sock ]; then\n\
+    chgrp docker /var/run/docker.sock || true\n\
+fi\n\
+exec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Switch to non-root user
+USER appuser
+
+# Environment variables
+ENV FLASK_ENV=production
+ENV PYTHONUNBUFFERED=1
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:5555/api/health || exit 1
+
+# Expose port
+EXPOSE 5555
+
+# Use the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Run with gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:5555", \
+     "--workers", "1", \
+     "--worker-class", "gevent", \
+     "--timeout", "300", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "ai_lab_backend:app"] 

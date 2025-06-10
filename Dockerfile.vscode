@@ -1,0 +1,43 @@
+FROM codercom/code-server:latest
+
+# Switch to root to install packages
+USER root
+
+# Install Python and common development tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    wget \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install common Python packages
+RUN pip3 install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    scikit-learn \
+    jupyter \
+    ipykernel \
+    black \
+    flake8 \
+    pytest
+
+# Set up MLflow environment variables
+ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+
+# Create workspace directory
+RUN mkdir -p /home/coder/workspace && \
+    chown -R coder:coder /home/coder/workspace
+
+# Switch back to coder user
+USER coder
+
+# Expose the VS Code port
+EXPOSE 8080
+
+# Start code-server
+CMD ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "none"] 

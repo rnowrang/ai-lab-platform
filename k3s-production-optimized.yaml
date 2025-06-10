@@ -1,0 +1,209 @@
+# Optimized K3s Configuration for AI Lab Platform
+# This configuration maximizes performance for GPU workloads
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k3s-gpu-config
+  namespace: kube-system
+data:
+  # Optimize kubelet for GPU workloads
+  kubelet-config.yaml: |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    cpuManagerPolicy: static
+    cpuManagerReconcilePeriod: 10s
+    topologyManagerPolicy: best-effort
+    topologyManagerScope: pod
+    systemReserved:
+      cpu: 1000m
+      memory: 2Gi
+    kubeReserved:
+      cpu: 1000m
+      memory: 2Gi
+    evictionHard:
+      memory.available: "5%"
+      nodefs.available: "10%"
+    maxPods: 250
+    podsPerCore: 0
+    
+---
+# GPU Device Plugin Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-device-plugin-config
+  namespace: gpu-operator-resources
+data:
+  config.yaml: |
+    version: v1
+    flags:
+      migStrategy: mixed  # Enable MIG if available
+      failOnInitError: false
+      deviceListStrategy: envvar
+      deviceIDStrategy: uuid
+      nvidiaDriverRoot: /run/nvidia/driver
+    resources:
+      - name: nvidia.com/gpu
+        replicas: 10  # Enable GPU sharing
+        
+---
+# Optimized Storage Class for ML Workloads
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: pd-ssd
+reclaimPolicy: Retain
+mountOptions:
+  - noatime
+  - nodiratime
+  
+---
+# Priority Classes for GPU Workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: gpu-high-priority
+value: 1000
+globalDefault: false
+description: "High priority class for GPU workloads"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: gpu-medium-priority
+value: 500
+globalDefault: true
+description: "Default priority class for GPU workloads"
+
+---
+# Network Policy for Performance
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gpu-workload-network
+  namespace: jupyterhub
+spec:
+  podSelector:
+    matchLabels:
+      component: singleuser-server
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: jupyterhub
+    - podSelector: {}
+  egress:
+  - to:
+    - namespaceSelector: {}
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mlflow-server
+  - to:
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+      
+---
+# GPU Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota
+  namespace: jupyterhub
+spec:
+  hard:
+    requests.nvidia.com/gpu: "4"
+    persistentvolumeclaims: "100"
+    
+---
+# Optimized JupyterHub Values Override
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jupyterhub-performance-config
+  namespace: jupyterhub
+data:
+  values-override.yaml: |
+    hub:
+      resources:
+        requests:
+          cpu: 1000m
+          memory: 2Gi
+        limits:
+          cpu: 2000m
+          memory: 4Gi
+      extraConfig:
+        performance: |
+          c.JupyterHub.concurrent_spawn_limit = 20
+          c.JupyterHub.spawn_throttle_retry_time = 30
+          c.JupyterHub.spawn_throttle_burst_limit = 10
+          c.JupyterHub.active_server_limit = 100
+          
+    proxy:
+      chp:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+            
+    singleuser:
+      cpu:
+        guarantee: 2
+        limit: 8
+      memory:
+        guarantee: 8Gi
+        limit: 32Gi
+      extraResource:
+        limits:
+          nvidia.com/gpu: "1"
+        requests:
+          nvidia.com/gpu: "1"
+      extraEnv:
+        NVIDIA_VISIBLE_DEVICES: all
+        NVIDIA_DRIVER_CAPABILITIES: compute,utility
+        NVIDIA_REQUIRE_CUDA: "cuda>=11.8"
+      nodeSelector:
+        node.kubernetes.io/gpu: "true"
+      extraPodConfig:
+        priorityClassName: gpu-medium-priority
+      storage:
+        type: hostPath
+        hostPath:
+          path: /mnt/data/homes/{username}
+        extraVolumes:
+          - name: shm-volume
+            emptyDir:
+              medium: Memory
+              sizeLimit: 32Gi
+        extraVolumeMounts:
+          - name: shm-volume
+            mountPath: /dev/shm
+            
+    scheduling:
+      userScheduler:
+        enabled: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+            
+    cull:
+      enabled: true
+      timeout: 7200  # 2 hours
+      every: 600 

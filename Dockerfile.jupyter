@@ -1,0 +1,36 @@
+FROM jupyter/scipy-notebook:latest
+
+# Switch to root to install system packages
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to jovyan user
+USER $NB_UID
+
+# Install PyTorch and common ML libraries
+RUN pip install --no-cache-dir \
+    torch \
+    torchvision \
+    torchaudio \
+    numpy \
+    pandas \
+    matplotlib \
+    scikit-learn \
+    seaborn \
+    plotly \
+    tensorboard
+
+# Set up MLflow environment variables
+ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+
+# Expose the JupyterLab port
+EXPOSE 8888
+
+# Start JupyterLab
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"] 
