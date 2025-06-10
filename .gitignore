@@ -3,6 +3,10 @@
 .env.*
 secrets/
 
+# SECURITY: Prevent committing sensitive files
+credentials.txt
+ssl/privkey.pem
+
 # Kubernetes secrets and configs
 kubeconfig
 *.kubeconfig
