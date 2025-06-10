@@ -770,19 +770,19 @@
             <div class="monitoring-tools">
                 <h3>🔍 Monitoring & Analytics</h3>
                 <div class="tools-grid">
-                    <a href="http://localhost:5000" target="_blank" class="tool-link mlflow-link">
+                    <a href="/mlflow/" target="_blank" class="tool-link mlflow-link">
                         <div class="tool-icon">📊</div>
                         <div class="tool-name">MLflow</div>
                         <div class="tool-description">Experiment tracking, model registry & deployment management</div>
                     </a>
                     
-                    <a href="http://localhost:9090" target="_blank" class="tool-link prometheus-link">
+                    <a href="/prometheus/" target="_blank" class="tool-link prometheus-link">
                         <div class="tool-icon">📈</div>
                         <div class="tool-name">Prometheus</div>
                         <div class="tool-description">Metrics collection & monitoring system for infrastructure</div>
                     </a>
                     
-                    <a href="http://localhost:3000" target="_blank" class="tool-link grafana-link">
+                    <a href="/grafana/" target="_blank" class="tool-link grafana-link">
                         <div class="tool-icon">📉</div>
                         <div class="tool-name">Grafana</div>
                         <div class="tool-description">Interactive dashboards & data visualization platform</div>
@@ -808,6 +808,15 @@
                     <option value="jupyter">JupyterLab</option>
                     <option value="vscode">VS Code Server</option>
                     <option value="custom">Custom</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Quota Tier</label>
+                <select id="quotaTier">
+                    <option value="default">Default (1 GPU, 8GB RAM, 2 CPU cores)</option>
+                    <option value="premium">Premium (2 GPUs, 16GB RAM, 4 CPU cores)</option>
+                    <option value="enterprise">Enterprise (4 GPUs, 32GB RAM, 8 CPU cores)</option>
                 </select>
             </div>
             
@@ -849,9 +858,12 @@
 
     <script>
         let currentUser = null;
-        let selectedGPUCount = 1;
         let environments = [];
-        const API_BASE = 'http://localhost:5555';
+        let selectedGPUCount = 1;
+        let autoRefreshInterval = null; // Add auto-refresh tracking
+        let isUpdatingEnvironments = false; // Prevent concurrent updates
+        
+        const API_BASE = ''; // Use relative paths since nginx proxies the API
 
         function showAuthTab(tab) {
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -906,9 +918,7 @@
 
         function handleLogout() {
             currentUser = null;
-            document.getElementById('authSection').classList.add('active');
-            document.getElementById('dashboardSection').classList.remove('active');
-            document.getElementById('userInfo').classList.remove('active');
+            showLoginForm();
             showAlert('Logged out successfully', 'success');
         }
 
@@ -921,14 +931,9 @@
             document.getElementById('userInfo').classList.add('active');
             
             loadTemplates();
-            updateQuotaDisplay();
-            updateEnvironmentsList();
             
-            // Auto-refresh every 30 seconds
-            setInterval(() => {
-                updateQuotaDisplay();
-                updateEnvironmentsList();
-            }, 30000);
+            // Start auto-refresh when showing dashboard
+            startAutoRefresh();
         }
 
         function updateUserInfo() {
@@ -976,12 +981,26 @@
                     const resourceInfo = baseType.includes('multi-gpu') ? '4 GPU • 32GB RAM' : 
                                        baseType.includes('vscode') ? '1 GPU • 8GB RAM' : '1 GPU • 16GB RAM';
                     
+                    // Get tier information
+                    const minimumTier = template.minimum_tier || 'default';
+                    const tierBadgeColor = minimumTier === 'enterprise' ? '#ef4444' : 
+                                         minimumTier === 'premium' ? '#f59e0b' : '#10b981';
+                    const tierLabel = minimumTier.charAt(0).toUpperCase() + minimumTier.slice(1);
+                    
+                    // Get actual resource requirements if available
+                    let resourceDisplay = resourceInfo;
+                    if (template.resource_requirements) {
+                        const req = template.resource_requirements;
+                        resourceDisplay = `${req.gpus} GPU${req.gpus > 1 ? 's' : ''} • ${req.memory_gb}GB RAM • ${req.cpu_cores} CPU${req.cpu_cores > 1 ? 's' : ''}`;
+                    }
+                    
                     container.innerHTML += `
                         <div class="template-card" onclick="selectTemplate('${templateName}')">
                             <h4>${icon} ${template.description.split(' for ')[0]}</h4>
                             <p>${template.description}</p>
-                            <div style="margin-top: 10px;">
-                                <span style="background: rgba(99, 102, 241, 0.2); color: #c7d2fe; padding: 5px 10px; border-radius: 15px; font-size: 12px; border: 1px solid rgba(99, 102, 241, 0.3);">${resourceInfo}</span>
+                            <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+                                <span style="background: rgba(99, 102, 241, 0.2); color: #c7d2fe; padding: 5px 10px; border-radius: 15px; font-size: 12px; border: 1px solid rgba(99, 102, 241, 0.3);">${resourceDisplay}</span>
+                                <span style="background: ${tierBadgeColor}20; color: ${tierBadgeColor}; padding: 5px 10px; border-radius: 15px; font-size: 12px; border: 1px solid ${tierBadgeColor}50;">Requires: ${tierLabel} Tier</span>
                             </div>
                         </div>
                     `;
@@ -1037,6 +1056,12 @@
             try {
                 showAlert(`Creating environment from ${templateName} template...`, 'success');
                 
+                // First get the template information to determine required tier
+                const templatesResponse = await fetch(`${API_BASE}/api/environments/templates`);
+                const templatesData = await templatesResponse.json();
+                const template = templatesData.templates[templateName];
+                const quotaTier = template?.minimum_tier || 'default';
+                
                 const response = await fetch(`${API_BASE}/api/environments/create-from-template`, {
                     method: 'POST',
                     headers: {
@@ -1045,7 +1070,7 @@
                     body: JSON.stringify({
                         template: templateName,
                         user_id: currentUser.email,
-                        quota: 'default'
+                        quota: quotaTier
                     })
                 });
                 
@@ -1057,8 +1082,13 @@
                 }
                 
                 showAlert(`Environment created successfully! Container ID: ${data.container_id}`, 'success');
-                updateEnvironmentsList();
-                updateQuotaDisplay();
+                
+                // Immediately refresh the list
+                await updateEnvironmentsList();
+                await updateQuotaDisplay();
+                
+                // Set up temporary fast refresh for 30 seconds to catch status changes
+                startFastRefresh();
                 
             } catch (error) {
                 console.error('Error creating environment from template:', error);
@@ -1088,6 +1118,7 @@
         async function createEnvironment() {
             const envName = document.getElementById('envName').value;
             const envType = document.getElementById('envType').value;
+            const quotaTier = document.getElementById('quotaTier').value;
             
             if (!envName) {
                 showAlert('Please enter an environment name', 'error');
@@ -1106,7 +1137,7 @@
                     body: JSON.stringify({
                         type: envType === 'vscode' ? 'vscode' : 'pytorch-jupyter',
                         user_id: currentUser.email,
-                        quota: 'default'
+                        quota: quotaTier
                     })
                 });
                 
@@ -1119,8 +1150,13 @@
                 
                 closeCreateModal();
                 showAlert(`Custom environment created successfully! Container ID: ${data.container_id}`, 'success');
-                updateEnvironmentsList();
-                updateQuotaDisplay();
+                
+                // Immediately refresh the list
+                await updateEnvironmentsList();
+                await updateQuotaDisplay();
+                
+                // Set up temporary fast refresh for 30 seconds to catch status changes
+                startFastRefresh();
                 
             } catch (error) {
                 console.error('Error creating custom environment:', error);
@@ -1129,6 +1165,13 @@
         }
 
         async function updateEnvironmentsList() {
+            // Prevent concurrent updates
+            if (isUpdatingEnvironments) {
+                return;
+            }
+            
+            isUpdatingEnvironments = true;
+            
             try {
                 // Use user-specific endpoint if user is logged in
                 const endpoint = currentUser ? 
@@ -1144,6 +1187,12 @@
                 
                 environments = data.environments;
                 const container = document.getElementById('environmentsList');
+                
+                // Only update DOM if the container still exists
+                if (!container) {
+                    return;
+                }
+                
                 container.innerHTML = '';
                 
                 if (environments.length === 0) {
@@ -1156,16 +1205,29 @@
                 }
                 
                 environments.forEach(env => {
-                    const statusClass = `status-${env.status === 'running' ? 'running' : env.status === 'exited' ? 'stopped' : env.status === 'paused' ? 'paused' : 'starting'}`;
-                    const statusText = env.status.charAt(0).toUpperCase() + env.status.slice(1);
+                    // Check if environment is likely still starting (created recently and running)
+                    const createdTime = new Date(env.created).getTime();
+                    const now = new Date().getTime();
+                    const ageMinutes = (now - createdTime) / (1000 * 60);
+                    const isLikelyStarting = env.status === 'running' && ageMinutes < 1; // Reduced to 1 minute
+                    
+                    const statusClass = `status-${env.status === 'running' ? (isLikelyStarting ? 'starting' : 'running') : env.status === 'exited' ? 'stopped' : env.status === 'paused' ? 'paused' : 'starting'}`;
+                    const statusText = isLikelyStarting ? 'Initializing...' : (env.status.charAt(0).toUpperCase() + env.status.slice(1));
                     
                     let actionButtons = '';
                     if (env.status === 'running') {
-                        actionButtons = `
-                            <button class="btn" style="width: auto; margin-left: 5px;" onclick="openEnvironment('${env.id}')">Open</button>
-                            <button class="btn btn-secondary" style="width: auto; margin-left: 5px; background: #ffc107; color: #000;" onclick="pauseEnvironment('${env.id}')">⏸️ Pause</button>
-                            <button class="btn btn-secondary" style="width: auto; margin-left: 5px; background: #dc3545;" onclick="stopEnvironment('${env.id}')">🛑 Stop</button>
-                        `;
+                        if (isLikelyStarting) {
+                            actionButtons = `
+                                <button class="btn" style="width: auto; margin-left: 5px;" onclick="openEnvironment('${env.id}')">Try Open</button>
+                                <small style="color: #fbbf24; margin-left: 10px;">⏳ Still initializing...</small>
+                            `;
+                        } else {
+                            actionButtons = `
+                                <button class="btn" style="width: auto; margin-left: 5px;" onclick="openEnvironment('${env.id}')">Open</button>
+                                <button class="btn btn-secondary" style="width: auto; margin-left: 5px; background: #ffc107; color: #000;" onclick="pauseEnvironment('${env.id}')">⏸️ Pause</button>
+                                <button class="btn btn-secondary" style="width: auto; margin-left: 5px; background: #dc3545;" onclick="stopEnvironment('${env.id}')">🛑 Stop</button>
+                            `;
+                        }
                     } else if (env.status === 'paused') {
                         actionButtons = `
                             <button class="btn" style="width: auto; margin-left: 5px; background: #28a745;" onclick="resumeEnvironment('${env.id}')">▶️ Resume</button>
@@ -1203,6 +1265,8 @@
                 });
             } catch (error) {
                 console.error('Error updating environments list:', error);
+            } finally {
+                isUpdatingEnvironments = false;
             }
         }
 
@@ -1211,13 +1275,18 @@
                 const response = await fetch(`${API_BASE}/api/environments/${envId}/access`);
                 const data = await response.json();
                 
+                console.log('Environment access data:', data);
+                
                 if (data.error) {
                     showAlert(`Error: ${data.error}`, 'error');
                     return;
                 }
                 
                 // Open the correct URL based on environment type
-                window.open(data.access_url, '_blank');
+                const accessUrl = data.access_url.replace('localhost', '143.197.122.165');
+                console.log('Opening URL:', accessUrl);
+                
+                window.open(accessUrl, '_blank');
                 showAlert(`Opening ${data.type} environment...`, 'success');
             } catch (error) {
                 console.error('Error opening environment:', error);
@@ -1225,7 +1294,9 @@
                 // Fallback: try to determine access URL from environment data
                 const env = environments.find(e => e.id === envId);
                 if (env && env.access_url) {
-                    window.open(env.access_url, '_blank');
+                    const accessUrl = env.access_url.replace('localhost', '143.197.122.165');
+                    console.log('Fallback - Opening URL:', accessUrl);
+                    window.open(accessUrl, '_blank');
                     showAlert(`Opening environment...`, 'success');
                 } else {
                     showAlert('Error opening environment - access URL not available', 'error');
@@ -1433,8 +1504,77 @@
             }, 4000);
         }
 
+        function startAutoRefresh() {
+            // Clear any existing interval
+            stopAutoRefresh();
+            
+            // Update immediately
+            updateEnvironmentsList();
+            updateQuotaDisplay();
+            
+            // Set up regular refresh every 10 seconds
+            autoRefreshInterval = setInterval(() => {
+                updateEnvironmentsList();
+                updateQuotaDisplay();
+            }, 10000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+
+        function startFastRefresh() {
+            // Clear any existing interval
+            stopAutoRefresh();
+            
+            // Fast refresh every 2 seconds for 30 seconds
+            let fastRefreshCount = 0;
+            const maxFastRefreshes = 15; // 30 seconds / 2 seconds
+            
+            const fastInterval = setInterval(() => {
+                updateEnvironmentsList();
+                updateQuotaDisplay();
+                
+                fastRefreshCount++;
+                if (fastRefreshCount >= maxFastRefreshes) {
+                    clearInterval(fastInterval);
+                    // Resume normal auto-refresh
+                    startAutoRefresh();
+                }
+            }, 2000);
+        }
+
+        function showLoginForm() {
+            document.getElementById('authSection').classList.add('active');
+            document.getElementById('dashboardSection').classList.remove('active');
+            document.getElementById('userInfo').classList.remove('active');
+            
+            // Stop auto-refresh when logged out
+            stopAutoRefresh();
+        }
+
+        function showMainContent() {
+            document.getElementById('authSection').classList.remove('active');
+            document.getElementById('dashboardSection').classList.add('active');
+            document.getElementById('userInfo').classList.add('active');
+            
+            // Update user info
+            updateUserInfo();
+            
+            // Start auto-refresh when logged in
+            startAutoRefresh();
+        }
+
         // Initialize - load environments when page loads
         // updateEnvironmentsList(); // Don't load until user logs in
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            stopAutoRefresh();
+        });
     </script>
 </body>
 </html>
