@@ -1,0 +1,29 @@
+[Unit]
+Description=AI Lab Platform Post-Reboot Automation
+After=docker.service
+Wants=docker.service
+Documentation=file:///home/llurad/ai-lab-platform/POST_REBOOT_AUTOMATION.md
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+WorkingDirectory=/home/llurad/ai-lab-platform
+ExecStart=/home/llurad/ai-lab-platform/post-reboot-automation.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600
+TimeoutStopSec=60
+
+# Environment variables
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="COMPOSE_HTTP_TIMEOUT=120"
+Environment="DOCKER_CLIENT_TIMEOUT=120"
+
+# Resource limits
+MemoryLimit=2G
+TasksMax=1000
+
+[Install]
+WantedBy=multi-user.target 

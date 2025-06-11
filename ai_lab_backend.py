@@ -1130,7 +1130,7 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         if env_type == "vscode":
             host_port = resource_manager.allocate_port(8080)
             container_port = "8080"
-        elif "jupyter" in env_type:
+        elif "jupyter" in env_type or env_type == "multi-gpu":
             host_port = resource_manager.allocate_port(8888)
             container_port = "8888"
         else:
@@ -1143,7 +1143,7 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         ports = {container_port: host_port}
         
         # Generate dynamic access URL
-        if "jupyter" in env_type:
+        if "jupyter" in env_type or env_type == "multi-gpu":
             access_url = f"http://localhost:{host_port}/lab"
         elif env_type == "vscode":
             access_url = f"http://localhost:{host_port}"
