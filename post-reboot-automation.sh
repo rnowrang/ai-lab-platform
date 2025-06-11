@@ -108,10 +108,23 @@ fix_data_permissions() {
         mkdir -p "$DATA_DIR"/{shared,users,admin}
     fi
     
-    # Fix ownership and permissions
-    chown -R llurad:docker "$DATA_DIR" 2>/dev/null || {
-        log_warn "Could not change ownership to llurad:docker, trying current user..."
-        chown -R $USER:docker "$DATA_DIR" 2>/dev/null || true
+    # Fix ownership for Jupyter containers
+    # USER DATA: Use jovyan user (UID 1000, GID 100) for Jupyter container compatibility
+    log_info "Setting user data ownership for Jupyter container compatibility..."
+    chown -R 1000:100 "$DATA_DIR/users" 2>/dev/null || {
+        log_warn "Could not set user data ownership to 1000:100"
+    }
+    
+    # SHARED DATA: Use host user for admin management
+    log_info "Setting shared data ownership for admin management..."
+    chown -R llurad:docker "$DATA_DIR/shared" 2>/dev/null || {
+        log_warn "Could not change shared data ownership to llurad:docker, trying current user..."
+        chown -R $USER:docker "$DATA_DIR/shared" 2>/dev/null || true
+    }
+    
+    # ADMIN DATA: Use host user for admin access
+    chown -R llurad:docker "$DATA_DIR/admin" 2>/dev/null || {
+        chown -R $USER:docker "$DATA_DIR/admin" 2>/dev/null || true
     }
     
     # Set directory permissions (775 = rwxrwxr-x)
@@ -126,10 +139,15 @@ fix_data_permissions() {
         chmod 775 "$DATA_DIR/$subdir"
     done
     
+    # Apply specific ownership after directory creation
+    chown -R 1000:100 "$DATA_DIR/users" 2>/dev/null || true
+    chown -R llurad:docker "$DATA_DIR/shared" 2>/dev/null || chown -R $USER:docker "$DATA_DIR/shared" 2>/dev/null || true
+    chown -R llurad:docker "$DATA_DIR/admin" 2>/dev/null || chown -R $USER:docker "$DATA_DIR/admin" 2>/dev/null || true
+    
     # NEW: Sync shared data to legacy location for existing environments
     sync_shared_data_to_legacy
     
-    log_info "✅ Data directory permissions fixed"
+    log_info "✅ Data directory permissions fixed (users: 1000:100, shared/admin: llurad:docker)"
 }
 
 # NEW Function: Sync shared data to legacy location
