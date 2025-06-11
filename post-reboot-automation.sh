@@ -33,6 +33,7 @@ log_step() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/var/log/ai-lab-post-reboot.log"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.production.yml"
+ENV_FILE="$SCRIPT_DIR/production.env"
 DATA_DIR="$SCRIPT_DIR/ai-lab-data"
 
 # Ensure we're running in the correct directory
@@ -234,11 +235,11 @@ start_services_with_health_checks() {
     
     # Stop any running services first
     log_info "Stopping any existing services..."
-    docker compose -f "$COMPOSE_FILE" down --remove-orphans >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans >/dev/null 2>&1 || true
     
     # Start services
     log_info "Starting services with Docker Compose..."
-    docker compose -f "$COMPOSE_FILE" up -d --build
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build
     
     # Wait for services to start
     log_info "Waiting for services to initialize..."
@@ -422,7 +423,7 @@ if [ ${#failed_services[@]} -gt 0 ]; then
     
     # Attempt restart
     cd /home/llurad/ai-lab-platform
-    docker compose -f docker-compose.production.yml up -d "${failed_services[@]}" >> "$LOG_FILE" 2>&1
+    docker compose -f docker-compose.production.yml --env-file production.env up -d "${failed_services[@]}" >> "$LOG_FILE" 2>&1
     
     # Create alert file for admin notification
     echo "Services restarted at $(date): ${failed_services[*]}" > "$ALERT_FILE"
@@ -536,7 +537,7 @@ main() {
     log_step "🎉 Post-Reboot Automation Complete!"
     log_info "Platform is ready and all known post-reboot issues have been addressed"
     log_info "Services Status:"
-    docker compose -f "$COMPOSE_FILE" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}"
     
     # NEW: Show data sync status
     if systemctl is-active ai-lab-data-sync.service >/dev/null 2>&1; then
