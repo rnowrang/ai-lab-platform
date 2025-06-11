@@ -298,6 +298,7 @@ check_service_health() {
                         else
                             log_warning "⚠️ Multi-gpu fix may not be applied, but continuing..."
                         fi
+                        return 0
                     else
                         log_warn "⚠️ $service_name health check failed"
                         return 1

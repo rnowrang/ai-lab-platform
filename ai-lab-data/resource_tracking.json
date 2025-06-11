@@ -1,23 +1,19 @@
 {
   "user_environments": {
-    "test_default@ailab.com": [
-      "ai-lab-pytorch-jupyter-1749517340"
-    ],
-    "test_premium@ailab.com": [
-      "ai-lab-pytorch-jupyter-1749517349"
-    ],
-    "test_enterprise@ailab.com": [
-      "ai-lab-pytorch-jupyter-1749517358"
-    ],
     "demo@ailab.com": [
-      "ai-lab-multi-gpu-1749534544"
+      "ai-lab-multi-gpu-1749629728",
+      "ai-lab-pytorch-jupyter-1749605388",
+      "ai-lab-vscode-1749618033"
     ],
     "test@ailab.com": [
-      "ai-lab-pytorch-jupyter-1749536083"
+      "ai-lab-multi-gpu-1749630305",
+      "ai-lab-pytorch-jupyter-1749630418"
     ]
   },
   "allocated_ports": [
     8896,
+    8898,
+    8899,
     8889,
     8891,
     8892,
