@@ -127,6 +127,18 @@ fix_data_permissions() {
         chown -R $USER:docker "$DATA_DIR/admin" 2>/dev/null || true
     }
     
+    # NEW: Fix resource tracking file permissions for backend container write access
+    log_info "Fixing resource tracking file permissions..."
+    if [ -f "$DATA_DIR/resource_tracking.json" ]; then
+        chown 1000:1000 "$DATA_DIR/resource_tracking.json" 2>/dev/null || true
+        chmod 664 "$DATA_DIR/resource_tracking.json" 2>/dev/null || true
+    fi
+    
+    # Ensure ai-lab-data directory is owned by backend user for tracking file write access
+    chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || {
+        log_warn "Could not set ai-lab-data ownership to 1000:1000"
+    }
+    
     # Set directory permissions (775 = rwxrwxr-x)
     find "$DATA_DIR" -type d -exec chmod 775 {} \; 2>/dev/null || true
     
@@ -144,10 +156,15 @@ fix_data_permissions() {
     chown -R llurad:docker "$DATA_DIR/shared" 2>/dev/null || chown -R $USER:docker "$DATA_DIR/shared" 2>/dev/null || true
     chown -R llurad:docker "$DATA_DIR/admin" 2>/dev/null || chown -R $USER:docker "$DATA_DIR/admin" 2>/dev/null || true
     
+    # Ensure resource tracking file has correct ownership for backend container
+    if [ -f "$DATA_DIR/resource_tracking.json" ]; then
+        chown 1000:1000 "$DATA_DIR/resource_tracking.json" 2>/dev/null || true
+    fi
+    
     # NEW: Sync shared data to legacy location for existing environments
     sync_shared_data_to_legacy
     
-    log_info "✅ Data directory permissions fixed (users: 1000:100, shared/admin: llurad:docker)"
+    log_info "✅ Data directory permissions fixed (users: 1000:100, shared/admin: llurad:docker, tracking: 1000:1000)"
 }
 
 # NEW Function: Sync shared data to legacy location
@@ -370,14 +387,138 @@ update_resource_tracking() {
         # Create a backup
         cp "$tracking_file" "$tracking_file.backup.$(date +%Y%m%d_%H%M%S)"
         
+        # Fix permissions first
+        chown 1000:1000 "$tracking_file" 2>/dev/null || true
+        chmod 664 "$tracking_file" 2>/dev/null || true
+        
         # Update tracking data via API (when backend is ready)
         sleep 5
         curl -s -k -X POST https://localhost/api/environments/cleanup >/dev/null 2>&1 || true
         
         log_info "✅ Resource tracking updated"
     else
-        log_info "No existing resource tracking file found"
+        log_info "No existing resource tracking file found, will be created during sync"
     fi
+    
+    # NEW: Perform comprehensive environment tracking synchronization
+    sync_environment_tracking
+    
+    # NEW: Configure VS Code containers
+    configure_vscode_containers
+}
+
+# NEW Function: Synchronize environment tracking data
+sync_environment_tracking() {
+    log_step "🔄 Synchronizing environment tracking data..."
+    
+    local tracking_file="$DATA_DIR/resource_tracking.json"
+    
+    # Ensure tracking file exists
+    if [ ! -f "$tracking_file" ]; then
+        log_info "Creating initial resource tracking file..."
+        mkdir -p "$DATA_DIR"
+        echo '{"user_environments":{},"allocated_ports":[]}' > "$tracking_file"
+        chown 1000:1000 "$tracking_file" 2>/dev/null || true
+        chmod 664 "$tracking_file" 2>/dev/null || true
+    fi
+    
+    # Wait for backend to be ready before syncing
+    local max_wait=60
+    local wait_count=0
+    
+    log_info "Waiting for backend to be ready for environment sync..."
+    while [ $wait_count -lt $max_wait ]; do
+        if curl -s -k https://localhost/api/health >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+        ((wait_count+=2))
+    done
+    
+    if [ $wait_count -ge $max_wait ]; then
+        log_warn "Backend not ready for sync, skipping environment tracking sync"
+        return
+    fi
+    
+    # Get all running AI Lab environment containers
+    local ai_lab_containers=$(docker ps --filter "name=ai-lab-" --format "{{.Names}}" | grep -E "(jupyter|vscode|pytorch|tensorflow|multi-gpu)" || true)
+    
+    if [ -z "$ai_lab_containers" ]; then
+        log_info "No AI Lab environment containers found to sync"
+        return
+    fi
+    
+    log_info "Found running environment containers to sync:"
+    echo "$ai_lab_containers" | while read container; do
+        log_info "  - $container"
+    done
+    
+    # Auto-register untracked containers to demo user as default
+    # In production, you might want to modify this logic for different user assignment
+    local registered_count=0
+    echo "$ai_lab_containers" | while read container; do
+        if [ -n "$container" ]; then
+            # Check if container is already tracked
+            local is_tracked=$(curl -s -k "https://localhost/api/environments" | grep -c "\"$container\"" || echo "0")
+            
+            if [ "$is_tracked" -eq "0" ]; then
+                log_info "Auto-registering untracked container: $container"
+                
+                # Register to demo user (you can modify this logic for different user assignment)
+                local register_result=$(curl -s -k -X POST "https://localhost/api/environments/$container/register-user" \
+                    -H "Content-Type: application/json" \
+                    -d '{"user_id": "demo@ailab.com"}' 2>/dev/null || echo "failed")
+                
+                if echo "$register_result" | grep -q "successfully registered"; then
+                    log_info "✅ Successfully registered $container to demo@ailab.com"
+                    ((registered_count++))
+                else
+                    log_warn "⚠️ Failed to register $container: $register_result"
+                fi
+            else
+                log_info "Container $container is already tracked"
+            fi
+        fi
+    done
+    
+    # Clean up stale tracking data
+    log_info "Cleaning up stale tracking entries..."
+    curl -s -k -X POST "https://localhost/api/environments/cleanup" >/dev/null 2>&1 || {
+        log_warn "Failed to clean up stale tracking entries via API"
+    }
+    
+    log_info "✅ Environment tracking synchronization completed"
+    if [ $registered_count -gt 0 ]; then
+        log_info "Registered $registered_count untracked containers"
+    fi
+}
+
+# NEW Function: Configure VS Code containers automatically  
+configure_vscode_containers() {
+    log_step "🔧 Configuring VS Code containers..."
+    
+    local vscode_containers=$(docker ps --filter "name=ai-lab-vscode" --format "{{.Names}}" || true)
+    
+    if [ -z "$vscode_containers" ]; then
+        log_info "No VS Code containers found to configure"
+        return
+    fi
+    
+    echo "$vscode_containers" | while read container; do
+        if [ -n "$container" ]; then
+            log_info "Configuring authentication for $container..."
+            
+            # Apply VS Code authentication fix
+            docker exec "$container" mkdir -p /home/coder/.config/code-server 2>/dev/null || true
+            docker exec "$container" bash -c 'echo "bind-addr: 127.0.0.1:8080
+auth: none
+cert: false" > /home/coder/.config/code-server/config.yaml' 2>/dev/null || true
+            docker exec "$container" chown -R coder:coder /home/coder/.config 2>/dev/null || true
+            docker exec "$container" pkill -f code-server 2>/dev/null || true
+            
+            log_info "✅ Configured authentication for $container"
+        fi
+    done
 }
 
 # Function: Test system functionality
@@ -470,6 +611,49 @@ EOF
     log_info "✅ Health monitoring cron job installed"
 }
 
+# NEW Function: Ensure SSL certificate persistence
+ensure_ssl_persistence() {
+    log_step "🔐 Ensuring SSL certificate persistence..."
+    
+    local ssl_dir="$SCRIPT_DIR/ssl"
+    
+    # Check if SSL directory exists
+    if [ ! -d "$ssl_dir" ]; then
+        log_warn "SSL directory not found at $ssl_dir"
+        return
+    fi
+    
+    # Check if certificates exist
+    if [ -f "$ssl_dir/fullchain.pem" ] && [ -f "$ssl_dir/privkey.pem" ]; then
+        log_info "SSL certificates found in $ssl_dir"
+        
+        # Ensure correct permissions for SSL files
+        chmod 644 "$ssl_dir/fullchain.pem" 2>/dev/null || true
+        chmod 600 "$ssl_dir/privkey.pem" 2>/dev/null || true
+        chown root:root "$ssl_dir"/*.pem 2>/dev/null || true
+        
+        log_info "✅ SSL certificate permissions configured"
+    else
+        log_warn "SSL certificates not found, HTTPS may not work properly"
+        log_info "Consider running setup-letsencrypt.sh or setup-self-signed-renewal.sh"
+    fi
+    
+    # Check if SSL renewal is configured
+    if [ -f "$SCRIPT_DIR/setup-self-signed-renewal.sh" ]; then
+        # Ensure renewal script is executable
+        chmod +x "$SCRIPT_DIR/setup-self-signed-renewal.sh"
+        
+        # Check if renewal cron job exists
+        if ! crontab -l 2>/dev/null | grep -q "setup-self-signed-renewal.sh"; then
+            log_info "Setting up SSL certificate auto-renewal..."
+            (crontab -l 2>/dev/null | grep -v "setup-self-signed-renewal.sh"; echo "0 2 * * 0 $SCRIPT_DIR/setup-self-signed-renewal.sh >/dev/null 2>&1") | crontab -
+            log_info "✅ SSL auto-renewal configured (weekly)"
+        else
+            log_info "SSL auto-renewal already configured"
+        fi
+    fi
+}
+
 # Function: Validate critical fixes are in place
 validate_permanent_fixes() {
     log_step "🔧 Validating permanent fixes..."
@@ -483,11 +667,11 @@ validate_permanent_fixes() {
         if [[ "$multi_gpu_occurrences" -ge "2" ]]; then
             log_info "✅ Multi-gpu dynamic port allocation fix present in backend code"
         else
-            log_warning "⚠️ Multi-gpu fix incomplete - only $multi_gpu_occurrences occurrences found"
+            log_warn "⚠️ Multi-gpu fix incomplete - only $multi_gpu_occurrences occurrences found"
             validation_failed=true
         fi
     else
-        log_warning "⚠️ Multi-gpu dynamic port allocation fix missing from backend code"
+        log_warn "⚠️ Multi-gpu dynamic port allocation fix missing from backend code"
         validation_failed=true
     fi
     
@@ -496,7 +680,7 @@ validate_permanent_fixes() {
     if docker inspect ai-lab-backend 2>/dev/null | grep -q "ai_lab_backend.py"; then
         log_info "✅ Backend code file properly mounted"
     else
-        log_warning "⚠️ Backend file mount may not be configured correctly"
+        log_warn "⚠️ Backend file mount may not be configured correctly"
         validation_failed=true
     fi
     
@@ -506,18 +690,65 @@ validate_permanent_fixes() {
         if [[ -w "ai-lab-data/resource_tracking.json" ]]; then
             log_info "✅ Resource tracking file accessible"
         else
-            log_warning "⚠️ Resource tracking file not writable"
+            log_warn "⚠️ Resource tracking file not writable"
             validation_failed=true
         fi
     else
         log_info "Creating initial resource tracking file..."
         mkdir -p ai-lab-data
         echo '{"user_environments":{},"allocated_ports":[]}' > ai-lab-data/resource_tracking.json
+        chown 1000:1000 ai-lab-data/resource_tracking.json 2>/dev/null || true
+        chmod 664 ai-lab-data/resource_tracking.json 2>/dev/null || true
         log_info "✅ Resource tracking file created"
     fi
     
+    # 4. NEW: Check environment tracking synchronization capability
+    log_info "Checking environment tracking sync capability..."
+    if curl -s -k https://localhost/api/health >/dev/null 2>&1; then
+        local admin_envs=$(curl -s -k "https://localhost/api/environments" 2>/dev/null || echo "failed")
+        if [[ "$admin_envs" != "failed" ]]; then
+            log_info "✅ Environment tracking API accessible"
+        else
+            log_warn "⚠️ Environment tracking API not responding"
+            validation_failed=true
+        fi
+    else
+        log_warn "⚠️ Backend not accessible for environment tracking validation"
+        validation_failed=true
+    fi
+    
+    # 5. NEW: Check VS Code authentication fix capability
+    log_info "Checking VS Code authentication fix..."
+    if [ -f "$SCRIPT_DIR/fix-vscode-auth.sh" ]; then
+        log_info "✅ VS Code authentication fix script available"
+    else
+        log_warn "⚠️ VS Code authentication fix script missing"
+        validation_failed=true
+    fi
+    
+    # 6. NEW: Check SSL certificate persistence
+    log_info "Checking SSL certificate persistence..."
+    if [ -f "$SCRIPT_DIR/ssl/fullchain.pem" ] && [ -f "$SCRIPT_DIR/ssl/privkey.pem" ]; then
+        log_info "✅ SSL certificates present and persistent"
+    else
+        log_warn "⚠️ SSL certificates may not be persistent"
+        validation_failed=true
+    fi
+    
+    # 7. NEW: Check data directory ownership for backend write access
+    log_info "Checking data directory ownership..."
+    local tracking_owner=$(stat -c %U:%G ai-lab-data/resource_tracking.json 2>/dev/null || echo "unknown")
+    if [[ "$tracking_owner" == "1000:1000" ]] || [[ "$tracking_owner" == "appuser:appuser" ]]; then
+        log_info "✅ Resource tracking file has correct ownership for backend write access"
+    else
+        log_warn "⚠️ Resource tracking file ownership incorrect: $tracking_owner"
+        # Attempt to fix it
+        chown 1000:1000 ai-lab-data/resource_tracking.json 2>/dev/null || true
+        validation_failed=true
+    fi
+    
     if [[ "$validation_failed" == "true" ]]; then
-        log_warning "Some validations failed, but automation will continue..."
+        log_warn "Some validations failed, but automation will continue..."
     else
         log_info "✅ All permanent fixes validated successfully"
     fi
@@ -533,13 +764,14 @@ main() {
     # System preparation
     cleanup_orphaned_containers
     fix_data_permissions
+    ensure_ssl_persistence
     check_network_config
     check_port_availability
     
     # Service startup
     start_services_with_health_checks
     
-    # Post-startup verification
+    # Post-startup verification and synchronization
     verify_data_consistency
     update_resource_tracking
     test_system_functionality
@@ -565,6 +797,14 @@ main() {
         log_info "ℹ️ Manual data sync completed (service not installed)"
     fi
     
+    # NEW: Show environment tracking status
+    local tracked_users=$(curl -s -k "https://localhost/api/environments" 2>/dev/null | grep -o '"environments":\[' | wc -l || echo "0")
+    if [ "$tracked_users" -gt "0" ]; then
+        log_info "✅ Environment tracking synchronized ($tracked_users environments detected)"
+    else
+        log_info "ℹ️ No environments currently tracked"
+    fi
+    
     log_info "Log file: $LOG_FILE"
     log_info "Monitoring: Health checks run every 5 minutes"
     echo ""
@@ -574,6 +814,13 @@ main() {
     echo "  - API Health: https://localhost/api/health"
     echo "  - MLflow: https://localhost/mlflow/"
     echo "  - Grafana: https://localhost/grafana/"
+    echo ""
+    echo "🔧 Platform Features:"
+    echo "  - ✅ Automatic environment tracking synchronization"
+    echo "  - ✅ Automatic VS Code authentication configuration"
+    echo "  - ✅ SSL certificate persistence and auto-renewal"
+    echo "  - ✅ Data directory permissions and ownership management"
+    echo "  - ✅ Post-reboot environment recovery and registration"
 }
 
 # Error handling

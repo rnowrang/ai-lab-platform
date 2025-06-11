@@ -1,9 +1,7 @@
 {
   "user_environments": {
     "demo@ailab.com": [
-      "ai-lab-multi-gpu-1749629728",
-      "ai-lab-pytorch-jupyter-1749605388",
-      "ai-lab-vscode-1749618033"
+      "ai-lab-multi-gpu-1749629728"
     ],
     "test@ailab.com": [
       "ai-lab-multi-gpu-1749630305",
@@ -15,8 +13,6 @@
     8898,
     8899,
     8889,
-    8891,
-    8892,
     8893,
     8894,
     8895
