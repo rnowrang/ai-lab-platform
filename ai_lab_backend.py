@@ -12,6 +12,7 @@ import zipfile
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import requests
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -1118,6 +1119,9 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
         environment = {}
         if env_type == "vscode":
             environment["SERVICE_TYPE"] = "vscode"
+            # Configure code-server to disable authentication
+            environment["PASSWORD"] = ""  # Empty password disables auth
+            environment["SUDO_PASSWORD"] = "ailab123"  # For sudo access if needed
         elif "jupyter" in env_type:
             environment["SERVICE_TYPE"] = "jupyter"
         
@@ -1205,6 +1209,23 @@ def _create_environment_core(env_type, user_id, user_quota='default'):
                 container_args["command"] = config["command"]
             
             container = docker_client.containers.run(**container_args)
+            
+            # Configure code-server authentication for VS Code containers
+            if env_type == "vscode":
+                try:
+                    # Wait for container to be ready
+                    time.sleep(5)
+                    
+                    # Configure code-server to disable authentication
+                    container.exec_run("mkdir -p /home/coder/.config/code-server")
+                    container.exec_run("bash -c 'echo \"bind-addr: 127.0.0.1:8080\nauth: none\ncert: false\" > /home/coder/.config/code-server/config.yaml'")
+                    container.exec_run("chown -R coder:coder /home/coder/.config")
+                    
+                    # Restart code-server to apply config
+                    container.exec_run("pkill -f code-server")
+                except Exception as config_error:
+                    # Log the error but don't fail container creation
+                    print(f"Warning: Could not configure code-server authentication: {config_error}")
             
             # Track the new environment
             resource_manager.track_environment(user_id, container.name)
