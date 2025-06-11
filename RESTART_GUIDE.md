@@ -620,3 +620,7 @@ nvidia-smi
 
 **🚀 Your AI Lab Platform now handles reboots automatically! Use manual restart methods when needed, but enjoy the peace of mind that comes with full automation.** 
 - Container logs for specific error messages 
+- Container logs for specific error messages 
+- Container logs for specific error messages 
+- Container logs for specific error messages 
+- Container logs for specific error messages 
